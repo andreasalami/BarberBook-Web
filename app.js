@@ -141,8 +141,11 @@ const shopLink = code => `${location.origin}${location.pathname}?shop=${code}${d
 
 // MARK: Account (owners and customers)
 
-/** Leaves the page for Google; boot() completes the sign-in on return. */
-const signInWithGoogle = () => run(() => api.startGoogle())
+/** Leaves the page for Google; boot() completes the sign-in on return. The demo never touches the real server:
+ *  on a public site it would leave anonymous users behind (the iPhone demo is only on developers' phones). */
+const signInWithGoogle = () => demo
+  ? showAlert('Demo', "Nella demo l'accesso con Google non è disponibile. Apri il sito senza ?demo per usarlo davvero.")
+  : run(() => api.startGoogle())
 
 /** The next server call starts a fresh anonymous session. A customer keeps the shop code in this browser. */
 function signOut() { api.signOut(); load() }

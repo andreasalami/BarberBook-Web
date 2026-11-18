@@ -29,6 +29,7 @@ Tutto il resto è identico: stesse tabelle, stesse regole RLS e trigger lato ser
 | Sessione nel Keychain | Sessione nel `localStorage` del browser (token e id utente, nient'altro) | È l'archivio disponibile sul web; vedi Sicurezza |
 | Eliminazione operatore/servizio con swipe | Pulsante "Elimina" con conferma | Sul web non c'è lo swipe; la conferma evita i clic sbagliati |
 | Demo con `-demo YES` in Xcode | Demo aprendo il sito con `?demo` | Stessi dati: Barberia Demo, codice **BARBA2** |
+| Nella demo "Continua con Google" contatta il server vero | Nella demo il pulsante Google mostra solo un avviso | Il sito è pubblico: la demo non deve lasciare utenti anonimi sul server |
 
 ## File
 
