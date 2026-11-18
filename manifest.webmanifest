@@ -1,0 +1,12 @@
+{
+  "name": "BarberBook",
+  "short_name": "BarberBook",
+  "description": "Prenota dal tuo barbiere, o gestisci l'agenda del tuo negozio.",
+  "lang": "it",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f2f2f7",
+  "theme_color": "#f2f2f7",
+  "icons": [{ "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }]
+}
