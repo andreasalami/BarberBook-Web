@@ -195,9 +195,11 @@ async function saveShop(updated) {
 }
 
 async function saveStaff(member) {
+  let saved = true
   if (demo) { D.staff.push(member); S.staff = [...D.staff] }
-  else await run(async () => { await api.upsert('staff', member); await reloadCatalog() })
+  else saved = await run(async () => { await api.upsert('staff', member); await reloadCatalog() })
   render()
+  return saved
 }
 
 async function saveService(service) {
@@ -233,13 +235,14 @@ async function deleteRow(table, id) {
 
 const toBooking = b => ({ ...b, starts_at: new Date(b.starts_at), ends_at: new Date(b.ends_at) })
 
-/** Busy intervals of one staff member on `day`, without names (database function `busy`). */
+/** Busy intervals of one staff member on `day`, without names (database function `busy`).
+ *  null on failure: the form must not show every time as free. */
 async function busy(staffID, day) {
   const from = startOfDay(day), to = addDays(from, 1)
   if (demo) return D.bookings.filter(b => b.staff_id === staffID && b.starts_at < to && b.ends_at > from)
     .map(b => ({ start: b.starts_at, end: b.ends_at }))
-  const rows = await attempt(() => api.rpc('busy', { p_staff: staffID, p_from: from.toISOString(), p_to: to.toISOString() })) ?? []
-  return rows.map(r => ({ start: new Date(r.starts_at), end: new Date(r.ends_at) }))
+  const rows = await attempt(() => api.rpc('busy', { p_staff: staffID, p_from: from.toISOString(), p_to: to.toISOString() }))
+  return rows?.map(r => ({ start: new Date(r.starts_at), end: new Date(r.ends_at) })) ?? null
 }
 
 /** The database refuses overlapping bookings of the same staff member (exclusion constraint), so two customers
@@ -281,14 +284,14 @@ async function agendaBookings(from, days, quiet = false) {
   return attempt(work)
 }
 
-/** Customer: own upcoming (and in progress) bookings in every shop. */
+/** Customer: own upcoming (and in progress) bookings in every shop. null on failure, so the list keeps what it shows. */
 async function myBookings() {
   const now = new Date()
   if (demo) return D.bookings.filter(b => b.ends_at > now && !D.ownerBookings.has(b.id)).sort((a, b) => a.starts_at - b.starts_at)
   const me = api.user()?.id
   if (!me) return []
   return await attempt(async () => (await api.select('bookings', [['select', '*,shops(name,services(name,price_cents)),staff(name)'],
-    ['customer_id', `eq.${me}`], ['ends_at', `gt.${now.toISOString()}`], ['order', 'starts_at']])).map(toBooking)) ?? []
+    ['customer_id', `eq.${me}`], ['ends_at', `gt.${now.toISOString()}`], ['order', 'starts_at']])).map(toBooking))
 }
 
 /** Calendar file with an alarm one hour before: the web stand-in for the iPhone's local reminder. */
@@ -322,6 +325,7 @@ function message(e) {
     // Table checks answer in English ("new row … violates check constraint"); the booking rules answer in Italian.
     case '23514': return e.message.startsWith('new row') ? 'Testo troppo lungo o dati non validi.' : e.message
     case api.SESSION_EXPIRED: case 'offline': return e.message
+    case '23505': return 'Esiste già. Aggiorna e riprova.'
     case '42501': return 'Operazione non permessa con questo account.'
     case 'validation_failed':
       if (e.message.includes('provider is not enabled')) return 'Accesso con Google non ancora attivo su Supabase (Authentication → Sign In / Providers → Google).'
@@ -511,8 +515,18 @@ function customerSignIn() {
 function setupView() {
   let name = ''
   const create = h('button', { type: 'submit', class: 'primary', disabled: true }, 'Crea il negozio')
+  // One tap only: a second insert would hit "one shop per owner" while the first is still in flight.
+  const submit = async e => {
+    e.preventDefault()
+    if (!name.trim() || create.disabled) return
+    create.disabled = true
+    create.textContent = 'Creazione in corso…'
+    await createShop(name.trim())
+    create.disabled = false
+    create.textContent = 'Crea il negozio'
+  }
   return page(header('Nuovo negozio', accountButton()),
-    h('form', { onsubmit: e => { e.preventDefault(); if (name.trim()) createShop(name.trim()) } },
+    h('form', { onsubmit: submit },
       section(null, h('div', { class: 'card' }, 'Crea il tuo negozio. Riceverai un codice e un QR da dare ai clienti: lo inquadrano e prenotano subito da te.')),
       section('Nome del negozio', h('div', { class: 'card' }, h('input', { placeholder: 'Es. Barberia Da Mario', 'aria-label': 'Nome del negozio',
         maxlength: '80', oninput: e => { name = e.target.value; create.disabled = !name.trim() } }))),
@@ -525,7 +539,8 @@ function accountItems() {
   const isOwner = S.role === 'owner'
   const swap = { label: switchRoleLabel(), glyph: 'swap', run: switchRole }
   if (isOwner ? !S.signedIn || S.ownerSignInRequired : !S.shop) return [swap] // owner sign-in, customer shop picker
-  if (isOwner && !S.shop) return [swap, { label: 'Esci', glyph: 'logout', run: signOut }] // new shop
+  if (isOwner && !S.shop) return [swap, { label: 'Esci', glyph: 'logout', run: signOut }, // new shop
+    { label: 'Elimina account', glyph: 'trash', danger: true, run: () => removeAccount(true) }]
   return [
     !isOwner && { label: 'Cambia negozio', glyph: 'store', run: leaveShop },
     swap,
@@ -535,10 +550,12 @@ function accountItems() {
 }
 
 async function removeAccount(isOwner) {
-  if (await confirmBox(isOwner ? 'Eliminare account e negozio?' : 'Eliminare i tuoi dati?',
-    isOwner ? 'Vengono cancellati il negozio, operatori, servizi e tutte le prenotazioni dei clienti. Non si può annullare.'
+  const ownsShop = isOwner && S.shop // an owner still on "Nuovo negozio" has an account but no shop yet
+  if (await confirmBox(ownsShop ? 'Eliminare account e negozio?' : isOwner ? "Eliminare l'account?" : 'Eliminare i tuoi dati?',
+    ownsShop ? 'Vengono cancellati il negozio, operatori, servizi e tutte le prenotazioni dei clienti. Non si può annullare.'
+      : isOwner ? 'Il tuo account viene cancellato. Non si può annullare.'
       : 'Le tue prenotazioni vengono cancellate e i negozi non vedranno più il tuo nome. Non si può annullare.',
-    isOwner ? 'Elimina tutto' : 'Elimina') && await deleteAccount()) setRole('')
+    ownsShop ? 'Elimina tutto' : 'Elimina') && await deleteAccount()) setRole('')
 }
 
 /** Theme choice inside the menu: applies at once and keeps the menu open. */
@@ -610,9 +627,11 @@ function bookingForm(f, rerender) {
 async function loadSlots(f, rerender) {
   const service = S.services.find(s => s.id === f.serviceID), request = ++f.request
   if (!service || !f.staffID || !S.shop) { f.slots = []; f.slot = null; rerender(); return }
+  const today = startOfDay(new Date())
+  if (f.day < today) f.day = today // page left open past midnight
   const intervals = await busy(f.staffID, f.day)
   if (request !== f.request) return // a newer choice replaced this one
-  f.slots = freeStarts(f.day, S.shop.week, service.minutes, intervals, new Date())
+  f.slots = intervals ? freeStarts(f.day, S.shop.week, service.minutes, intervals, new Date()) : []
   if (f.slot && !f.slots.some(s => s.getTime() === f.slot.getTime())) f.slot = null // a refresh keeps a time still free
   rerender()
 }
@@ -670,7 +689,7 @@ function mineView() {
     : h('p', { class: 'empty secondary' }, 'Nessuna prenotazione futura.'))
 }
 
-async function reloadMine() { S.mine = await myBookings(); render() }
+async function reloadMine() { const list = await myBookings(); if (list) { S.mine = list; render() } }
 
 async function cancelMine(b) {
   const yes = await showAlert('Disdire la prenotazione?', `${b.service_name}, ${shortDate(b.starts_at)}`,
@@ -762,10 +781,11 @@ function settingsView() {
   const shop = S.shop
   const link = shopLink(shop.code)
   if (qrCache.link !== link) qrCache = { link, src: qrDataURL(link) }
-  const add = h('button', { type: 'button', class: 'link', disabled: !S.newStaff.trim(), onclick: () => {
+  // The field is cleared only once the server saved the name, so a failure does not lose it.
+  const add = h('button', { type: 'button', class: 'link', disabled: !S.newStaff.trim(), onclick: async () => {
     const name = S.newStaff.trim()
-    S.newStaff = ''
-    saveStaff({ id: crypto.randomUUID(), shop_id: shop.id, name })
+    add.disabled = true
+    if (await saveStaff({ id: crypto.randomUUID(), shop_id: shop.id, name }) && S.newStaff.trim() === name) { S.newStaff = ''; render() }
   } }, 'Aggiungi')
   return page(header(shop.name, accountButton()),
     section('Codice per i clienti', h('div', { class: 'card qr printable' },
