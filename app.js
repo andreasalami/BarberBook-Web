@@ -594,7 +594,7 @@ function bookingForm(f, rerender) {
       placeholder: f.isOwner ? 'Nome del cliente' : 'Scrivi qui il tuo nome', 'aria-label': f.isOwner ? 'Nome del cliente' : 'Il tuo nome',
       autocomplete: f.isOwner ? 'off' : 'name', maxlength: '60', value: f.name,
       oninput: e => { f.name = e.target.value; book.disabled = !f.name.trim() || f.saving } })),
-      !f.isOwner && h('p', { class: 'footer' }, "Il nome è visibile solo a te e al negozio. Dopo la prenotazione puoi aggiungerla al calendario, con un promemoria un'ora prima.")),
+      !f.isOwner && h('p', { class: 'footer' }, "Il nome è visibile solo a te e al negozio. Il sito non manda promemoria: dopo la prenotazione aggiungila al calendario per ricevere un avviso un'ora prima.")),
     section('Orari liberi', h('div', { class: 'card slots' }, f.slots.length
       ? h('div', { class: 'slot-grid' }, f.slots.map(s => {
           const selected = f.slot?.getTime() === s.getTime()
@@ -634,7 +634,9 @@ async function confirmBooking(f, rerender) {
   if (!booking) return refreshForm(f, rerender) // refused (slot taken, service or hours changed): show what is bookable now
   if (!f.isOwner) NAME.set(customer)
   loadSlots(f, rerender)
-  await showAlert('Prenotazione confermata', `${booking.service_name} con ${staffName(booking.staff_id)}, ${fullDate(booking.starts_at)}.`,
+  // Customers get no other reminder (no push, no email): without the calendar event the booking is easy to forget.
+  await showAlert('Prenotazione confermata', `${booking.service_name} con ${staffName(booking.staff_id)}, ${fullDate(booking.starts_at)}.`
+    + (f.isOwner ? '' : "\n\nIl sito non manda promemoria. Se non la aggiungi al calendario rischi di dimenticarla: il calendario ti avvisa un'ora prima."),
     f.isOwner ? [{ label: 'OK' }] : [{ label: 'Aggiungi al calendario', action: () => addToCalendar(booking) }, { label: 'OK' }])
   if (f.isOwner) closeSheet()
 }
