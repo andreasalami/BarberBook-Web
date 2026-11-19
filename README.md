@@ -103,9 +103,11 @@ Stessi dati e stesse regole dell'app iPhone (tabella completa nel [README dell'a
 
 GitHub Pages diventa un fornitore in più: serve solo i file statici, non riceve dati delle prenotazioni.
 
+L'informativa per clienti e titolari è nel sito: menu account → **Privacy** (`openPrivacy` in `app.js`, contatto in `PRIVACY_CONTACT`). Se cambiano i dati raccolti, aggiornare insieme questa tabella e quella pagina.
+
 ## Limiti noti
 
-Oltre a quelli dell'app iPhone (fuso orario fisso, un negozio per titolare, una fascia oraria al giorno, nessuna notifica al titolare, limite di 4 prenotazioni aggirabile ricreando utenti anonimi):
+Oltre a quelli dell'app iPhone (orari mostrati nell'ora del telefono: il server dal 18/11/2026 usa il fuso di ogni negozio, predefinito Roma; un negozio per titolare, una fascia oraria al giorno, nessuna notifica al titolare, limite di 4 prenotazioni aggirabile ricreando utenti anonimi):
 
 - **Piano gratuito di Supabase**: il progetto va in pausa dopo 7 giorni senza traffico (si riattiva dalla dashboard) e non ha backup. È il prezzo del costo zero.
 - **Abuso dell'accesso anonimo**: sul web è più facile creare utenti anonimi in serie. Contromisura gratuita da valutare: CAPTCHA Cloudflare Turnstile sull'accesso anonimo (Supabase → Authentication → Attack Protection), richiede un account Cloudflare gratuito.

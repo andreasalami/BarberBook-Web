@@ -368,6 +368,7 @@ const ICON = {
   logout: 'M10 4H5v16h5M15 8l4 4-4 4M19 12H9',
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',
   theme: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 3v18',
+  shield: 'M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z',
 }
 function icon(name) {
   const NS = 'http://www.w3.org/2000/svg'
@@ -558,6 +559,27 @@ async function removeAccount(isOwner) {
     ownsShop ? 'Elimina tutto' : 'Elimina') && await deleteAccount()) setRole('')
 }
 
+/** Privacy notice (GDPR art. 13), from the account menu on every screen. Facts match the README privacy table. */
+const PRIVACY_CONTACT = 'asalami27@gmail.com'
+function openPrivacy() {
+  const p = text => h('p', {}, text)
+  openSheet(() => sheetPage('Privacy', closeButton(), h('div', { class: 'card prose' },
+    h('h3', {}, 'Chi tratta i dati'),
+    p("Il negozio presso cui prenoti usa il tuo nome per gestire l'appuntamento. Il servizio BarberBook (questo sito e il suo database) li conserva per conto del negozio. Per qualsiasi richiesta scrivi a " + PRIVACY_CONTACT + '.'),
+    h('h3', {}, 'Quali dati'),
+    p("Clienti: il nome che scrivi (anche un soprannome), servizio, operatore, giorno e ora. Un identificativo anonimo generato dal server ti fa vedere solo le tue prenotazioni. Nessun telefono, nessuna email."),
+    p("Chi accede con Google (titolari, e clienti che lo scelgono): email, nome, foto e identificativo Google, usati solo per riconoscerti; i negozi non li vedono."),
+    p("Nel browser restano la sessione, il ruolo, il codice del negozio e l'ultimo nome usato."),
+    h('h3', {}, 'Perché'),
+    p("Solo per fissare e gestire l'appuntamento che chiedi (art. 6.1.b GDPR). Nessuna pubblicità, nessuna profilazione, nessuna statistica di navigazione."),
+    h('h3', {}, 'Dove'),
+    p("Database Supabase con server nell'Unione Europea (Francoforte). Le pagine sono servite da GitHub Pages, che vede l'indirizzo IP. Google solo se scegli di accedere con Google."),
+    h('h3', {}, 'Per quanto'),
+    p("Le prenotazioni, con il nome, vengono cancellate in automatico 30 giorni dopo l'appuntamento; anche i messaggi interni sulle prenotazioni spariscono entro 30 giorni. Un identificativo anonimo senza prenotazioni viene cancellato dopo 30 giorni. Un account Google resta finché non lo elimini."),
+    h('h3', {}, 'I tuoi diritti'),
+    p("Puoi disdire in ogni momento. Dal menu account, \"Elimina i miei dati\" cancella subito te e le tue prenotazioni. Puoi chiedere accesso, rettifica o cancellazione scrivendo a " + PRIVACY_CONTACT + " e fare reclamo al Garante per la protezione dei dati personali (garanteprivacy.it)."))))
+}
+
 /** Theme choice inside the menu: applies at once and keeps the menu open. */
 const themeRow = () => h('div', { class: 'menu-theme' }, icon('theme'),
   h('div', { class: 'segments', role: 'group', 'aria-label': 'Tema' }, THEMES.map(([value, label]) =>
@@ -574,7 +596,8 @@ function accountButton() {
   const button = h('button', { type: 'button', class: 'menu-button', popovertarget: 'account-menu', 'aria-label': 'Account e tema' }, icon('person'))
   const item = i => h('button', { type: 'button', class: i.danger ? 'menu-item danger' : 'menu-item',
     onclick: () => { menu.hidePopover(); i.run() } }, icon(i.glyph), i.label)
-  menu.append(...items.filter(i => !i.danger).map(item), themeRow(), ...items.filter(i => i.danger).map(item))
+  menu.append(...items.filter(i => !i.danger).map(item), item({ label: 'Privacy', glyph: 'shield', run: openPrivacy }), themeRow(),
+    ...items.filter(i => i.danger).map(item))
   menu.addEventListener('beforetoggle', e => {
     const open = e.newState === 'open'
     button.classList.toggle('open', open)
