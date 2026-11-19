@@ -7,6 +7,7 @@
   --bg: #fff; --card: #fff; --text: #000; --secondary: #555; --ink: #000; --line: 1.5px;
   --accent: #2c3b5e; --accent-fill: #2c3b5e; --accent-soft: rgba(44, 59, 94, .1);
   --cta: #d93a3a; --danger: #b3261e; --fill: rgba(0, 0, 0, .06); --bar: #fff;
+  --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   --display: "Oswald", "Avenir Next Condensed", "Arial Narrow", sans-serif;
 }
 @media (prefers-color-scheme: dark) {
@@ -15,6 +16,7 @@
     --bg: #111214; --card: #111214; --text: #f1ece2; --secondary: #a29d93; --ink: #f1ece2;
     --accent: #8db0f5; --accent-fill: #2f6bd9; --accent-soft: rgba(47, 107, 217, .22);
     --danger: #f2766b; --fill: rgba(241, 236, 226, .08); --bar: #111214;
+    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f1ece2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
   }
 }
 :root[data-theme=dark] {
@@ -22,6 +24,7 @@
   --bg: #111214; --card: #111214; --text: #f1ece2; --secondary: #a29d93; --ink: #f1ece2;
   --accent: #8db0f5; --accent-fill: #2f6bd9; --accent-soft: rgba(47, 107, 217, .22);
   --danger: #f2766b; --fill: rgba(241, 236, 226, .08); --bar: #111214;
+    --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23f1ece2' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E");
 }
 
 * { box-sizing: border-box; }
@@ -81,10 +84,16 @@ h1, .group > h2, .day-title h3, .big, .primary, .tab, .code-big { font-family: v
 .row { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; padding: 6px 0; margin: 0; }
 .rows > .row + .row, .rows > .row + .row-link { border-top: var(--line) solid var(--ink); }
 .row > span:first-child { flex: none; }
+/* Choice fields: same width, value centered, our own arrow inset from the edge (the native one sits on the border). */
 .row select, .row input[type=date] {
-  border: 0; background: var(--fill); padding: 6px 10px; max-width: 70%; min-width: 0; text-align: end; min-height: 36px;
-  text-overflow: ellipsis; font-weight: 600;
+  flex: 1; max-width: 70%; min-width: 0; min-height: 40px; border: 0; padding: 6px 12px; background-color: var(--fill);
+  text-align: center; text-align-last: center; text-overflow: ellipsis; font-weight: 600;
 }
+.row select {
+  appearance: none; -webkit-appearance: none; padding-inline: 36px;
+  background-image: var(--chevron); background-repeat: no-repeat; background-position: right 12px center; background-size: 14px;
+}
+.row input[type=date]::-webkit-date-and-time-value { text-align: center; }
 .row input.end { text-align: end; width: auto; flex: 1; min-width: 0; }
 .row-link { width: 100%; border: 0; background: none; padding: 6px 0; text-align: start; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 48px; }
 .row-link.grow { flex: 1; }
@@ -206,7 +215,7 @@ dialog { border: 0; padding: 0; color: var(--text); background: none; max-width:
 dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .alert-box { width: min(300px, calc(100vw - 48px)); background: var(--bg); border: var(--line) solid var(--ink); overflow: hidden; text-align: center; }
 .alert-box h2 { margin: 20px 16px 4px; font-size: 17px; }
-.alert-box p { margin: 4px 16px 16px; font-size: 14px; }
+.alert-box p { margin: 4px 16px 16px; font-size: 14px; white-space: pre-line; }
 .alert-box h2 + .alert-buttons, .alert-box > .alert-buttons:first-child { margin-top: 0; }
 .alert-buttons { display: flex; border-top: var(--line) solid var(--ink); }
 .alert-buttons.vertical { flex-direction: column; }
