@@ -247,16 +247,31 @@ do $$ begin
   if exists (select 1 from public.bookings where customer_name = 'Dora') then raise exception 'FAIL: delete_me kept the bookings'; end if;
 end $$;
 
--- Keyless requests (no session) see nothing.
+-- Keyless requests (no session) may browse the catalogue (since 20261118120000) but never see bookings.
 set local role anon;
 do $$ begin
+  if not exists (select 1 from public.shops) then raise exception 'FAIL: anon role cannot browse shops'; end if;
   begin
-    perform 1 from public.shops;
-    raise exception 'FAIL: anon role can read shops';
+    perform 1 from public.bookings;
+    raise exception 'FAIL: anon role can read bookings';
   exception when insufficient_privilege then null;
   end;
 end $$;
 reset role;
+
+do $$ begin
+  if exists (select 1 from public.free_slots('a2000000-0000-4000-8000-000000000000',
+               (select id from public.services where shop_id = 'a1000000-0000-4000-8000-000000000000' limit 1),
+               (now() at time zone 'Europe/Rome')::date + 7) s
+             where extract(minute from s at time zone 'Europe/Rome')::int % 30 <> 0) then
+    raise exception 'FAIL: free_slots off the 30-minute grid';
+  end if;
+  if not exists (select 1 from public.free_slots('a2000000-0000-4000-8000-000000000000',
+               (select id from public.services where shop_id = 'a1000000-0000-4000-8000-000000000000' limit 1),
+               (now() at time zone 'Europe/Rome')::date + 7)) then
+    raise exception 'FAIL: free_slots returned nothing on an open day';
+  end if;
+end $$;
 
 select 'RLS checks passed' as result; -- only reached when every check above passed
 rollback;

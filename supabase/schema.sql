@@ -1,6 +1,8 @@
 -- BarberBook database. Run once on a new project: Supabase Dashboard → SQL Editor → paste → Run.
 -- Every shop's data is isolated by Row Level Security (RLS): the server enforces it, not the app.
--- Verify with supabase/tests/rls.sql after running this file.
+-- Then run, in order, the migrations named YYYYMMDDHHMMSS_*.sql in supabase/migrations (the live project has them):
+-- 20261118120000 per-shop time zone, server-side free slots, push queue; 20261119120000 the 30-minute grid.
+-- Verify with supabase/tests/run-local.sh, which applies the same sequence.
 
 create schema if not exists extensions;
 create extension if not exists btree_gist with schema extensions; -- lets the exclusion constraint mix uuid "=" and range "&&"
@@ -33,7 +35,7 @@ create table public.services (
   id          uuid primary key default gen_random_uuid(),
   shop_id     uuid not null references public.shops on delete cascade,
   name        text not null check (char_length(name) between 1 and 80),
-  minutes     int  not null check (minutes between 30 and 480 and minutes % 30 = 0), -- the 30-minute slot grid
+  minutes     int  not null check (minutes between 5 and 480),
   price_cents int  not null check (price_cents between 0 and 1000000)
 );
 
@@ -56,7 +58,7 @@ create index on public.bookings (shop_id, starts_at);
 create index on public.bookings (customer_id, starts_at);
 
 -- Server-side booking rules, so a tampered client (or a script) cannot get around what the app shows:
--- the appointment starts on the 30-minute grid, the service exists with that exact duration, the shop is open for the whole appointment, and a customer holds at
+-- the service exists with that exact duration, the shop is open for the whole appointment, and a customer holds at
 -- most 4 upcoming bookings per shop. The owner's own bookings (walk-ins, phone calls) get no customer account.
 -- ponytail: hours are read in Europe/Rome, as the app shows them; store a time zone per shop if shops abroad join.
 create function public.check_booking() returns trigger language plpgsql set search_path = '' as $$
@@ -70,9 +72,6 @@ begin
   elsif (select count(*) from public.bookings
          where customer_id = new.customer_id and shop_id = new.shop_id and ends_at > now()) >= 4 then
     raise exception 'Hai già 4 prenotazioni in questo negozio. Disdicine una per prenotare ancora.' using errcode = '23514';
-  end if;
-  if extract(minute from local_start)::int % 30 <> 0 or extract(second from local_start) <> 0 then
-    raise exception 'Gli appuntamenti iniziano ogni mezz''ora.' using errcode = '23514';
   end if;
   if not exists (select 1 from public.services where shop_id = new.shop_id and name = new.service_name
                  and new.ends_at - new.starts_at = make_interval(mins => minutes)) then
