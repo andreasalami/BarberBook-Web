@@ -2,7 +2,7 @@
 
 Copia web, **a costo zero**, dell'app iPhone [BarberBook](../BarberBook/README.md): stesse schermate, stesse regole, stesso backend. Si apre da qualsiasi browser (iPhone, Android, computer) e si può aggiungere alla schermata Home come un'app.
 
-- **Cliente**: inquadra il QR del negozio con la fotocamera del telefono (si apre direttamente la pagina del negozio) oppure scrive il codice di 6 caratteri. Sceglie servizio, operatore e giorno, vede solo gli orari liberi, prenota, aggiunge l'appuntamento al calendario con un promemoria un'ora prima, può disdire. Non serve un account: solo il nome che scrive. Dal menu Account può accedere con Google per ritrovare le prenotazioni su un altro dispositivo.
+- **Cliente**: inquadra il QR del negozio con la fotocamera del telefono (si apre direttamente la pagina del negozio) oppure scrive il codice di 6 caratteri. Sceglie servizio, operatore e giorno, vede solo gli orari liberi, prenota, aggiunge l'appuntamento al calendario con un promemoria un'ora prima, può disdire. Non serve un account: solo il nome che scrive. Dal menu (icona in alto a destra) può accedere con Google per ritrovare le prenotazioni su un altro dispositivo.
 - **Titolare**: accede con Google, crea il negozio e riceve codice e QR da condividere o stampare. Gestisce l'agenda dei prossimi 5 giorni (su schermo largo una colonna per giorno; su telefono la striscia dei 5 giorni e poi i giorni uno sotto l'altro), gli appuntamenti al banco o al telefono, orari di apertura, operatori e servizi. Può eliminare account e negozio.
 
 ## Costo: zero
@@ -19,7 +19,7 @@ Nessun Apple Developer Program (99 €/anno), nessun App Store, nessun piano Pro
 
 ## Differenze rispetto all'app iPhone
 
-Tutto il resto è identico: stesse tabelle, stesse regole RLS e trigger lato server, stessi testi, stesso ordine dei menu, stessa modalità demo.
+Funzioni e dati sono identici: stesse tabelle, stesse regole RLS e trigger lato server, stessi testi, stessa modalità demo. L'aspetto invece è proprio del sito dal 19/11/2026 ([ADR 0004](docs/adr/0004-web-own-look.md)).
 
 | App iPhone | Copia web | Perché |
 |---|---|---|
@@ -28,6 +28,8 @@ Tutto il resto è identico: stesse tabelle, stesse regole RLS e trigger lato ser
 | QR `barberbook://shop/CODICE` (serve l'app installata) | QR `https://…/BarberBook-Web/?shop=CODICE` | Lo apre qualsiasi fotocamera, senza installare nulla |
 | Sessione nel Keychain | Sessione nel `localStorage` del browser (token e id utente, nient'altro) | È l'archivio disponibile sul web; vedi Sicurezza |
 | Eliminazione operatore/servizio con swipe | Pulsante "Elimina" con conferma | Sul web non c'è lo swipe; la conferma evita i clic sbagliati |
+| Aspetto iOS (colori di sistema, blu Apple) | Stile "streetwear": linee nere spesse, angoli retti, titoli Oswald maiuscoli, blu notte e rosso barbiere dell'icona | Scelta di Andrea: il sito deve sembrare una barberia, non un'app di impostazioni |
+| Menu Account come foglio di azioni | Icona in alto a destra con menu a tendina, uguale in ogni schermata, con la scelta del tema (Auto, Chiaro, Scuro) | Il tema manuale è richiesto sul web; il menu unico sostituisce tre varianti |
 | Demo con `-demo YES` in Xcode | Demo aprendo il sito con `?demo` | Stessi dati: Barberia Demo, codice **BARBA2** |
 | Nella demo "Continua con Google" contatta il server vero | Nella demo il pulsante Google mostra solo un avviso | Il sito è pubblico: la demo non deve lasciare utenti anonimi sul server |
 
@@ -41,7 +43,8 @@ Tutto il resto è identico: stesse tabelle, stesse regole RLS e trigger lato ser
 | `logic.js` | Logica pura: orari liberi, prezzi, formati italiani, file calendario | `Scheduling.swift`, `Service.cents` |
 | `qr.js` | Generatore di QR (nessuna libreria) | Core Image |
 | `config.js` | URL e chiave pubblica del progetto Supabase | Costanti in `Supabase.swift` |
-| `style.css` | Aspetto stile iOS, chiaro e scuro, layout largo | — |
+| `style.css` | Aspetto (colori in variabili, tema chiaro e scuro), layout largo | — |
+| `fonts/oswald-500.woff2`, `fonts/OFL.txt` | Font dei titoli copiato nel sito (la CSP blocca i font esterni) e la sua licenza SIL OFL | — |
 | `manifest.webmanifest`, `icon-512.png`, `apple-touch-icon.png` | Installazione sulla schermata Home, icona del palo da barbiere | `AppIcon` |
 | `checks/checks.mjs` | Self-check di orari, prezzi, file calendario e QR | `Checks/main.swift` |
 | `checks/qr-decode.swift` | Legge i QR generati con il lettore di macOS | — |
@@ -119,6 +122,13 @@ Oltre a quelli dell'app iPhone (fuso orario fisso, un negozio per titolare, una 
 - Supabase reale, negozio di prova `PROVA2`: apertura dal link del QR, sessione anonima creata (nel browser solo token e id), orari dal server, prenotazione accettata dalle regole del server, file calendario corretto (18:30 ora di Roma = 17:30 UTC, avviso a −1 h), "Le mie" con prezzo e negozio, avvio dell'accesso Google fino alla pagina di Google (provider e collegamento account attivi), "Elimina i miei dati". Controllo SQL in sola lettura: nessuna prenotazione e nessun utente anonimo di prova rimasti.
 - **Non verificato**: accesso Google completato e parte titolare sul server reale (richiede il tuo account Google e il redirect configurato su Supabase), pubblicazione su GitHub Pages, file `.ics` aperto su iPhone/Android veri.
 
+## Verifica del nuovo aspetto (19/11/2026)
+
+- `checks/checks.mjs`: passa. `node --check app.js`: passa.
+- Demo nel browser integrato, 375 px e 1100 px: prenotazione con pulsante "Prenota →" (rosso, su una riga; pieno e grigio quando manca il nome), conferma, "Le mie", menu da icona in ogni schermata (codice negozio, accesso titolare, agenda, negozio), chiusura con Esc e con un tocco fuori, apertura da tastiera, Passa a Negoziante/Cliente, appuntamento al banco. Tema: Auto segue il sistema, Chiaro e Scuro restano dopo il ricaricamento anche con il sistema nell'altro tema, il colore della barra del browser segue. Nessun errore in console, nessuno scorrimento orizzontale, font Oswald caricato.
+- Contrasto WCAG calcolato: bianco su rosso `#d93a3a` 4,55:1; bianco su blu notte 11,1:1; bianco su blu scuro `#2f6bd9` 4,97:1; testi secondari 7,5:1 (chiaro) e 6,9:1 (scuro). Tutti sopra la soglia AA (4,5:1).
+- **Non verificato**: Safari su iPhone vero e browser più vecchi del 2024 (il menu usa `popover`, vedi sotto), stampa del QR con il nuovo stile.
+
 ## Concetti nuovi
 
 **GitHub Pages**: hosting gratuito di file statici direttamente da un repository GitHub.
@@ -138,3 +148,15 @@ Oltre a quelli dell'app iPhone (fuso orario fisso, un negozio per titolare, una 
 **OAuth con PKCE nel browser**: come nell'app, ma la pagina lascia il posto a Google e poi Supabase la riapre con `?code=…`. Il `code_verifier` resta nel `sessionStorage` della scheda durante il giro; senza di esso il codice è inutile. Per questo l'indirizzo di ritorno deve essere nella lista dei Redirect URLs di Supabase.
 
 **File `.ics` (iCalendar)**: formato standard di testo per gli eventi, letto da Calendario di Apple, Google Calendar e Outlook. Il blocco `VALARM` con `TRIGGER:-PT1H` è l'avviso un'ora prima.
+
+**Popover nativo (`popover` e `popovertarget`)**: attributi HTML che trasformano un elemento in un pannello a comparsa gestito dal browser.
+- **Modello mentale**: il pulsante con `popovertarget="account-menu"` apre e chiude l'elemento con `id="account-menu"` e `popover`. Il browser lo mette sopra tutto (*top layer*), lo chiude con un tocco fuori o con Esc e gestisce la tastiera, senza JavaScript per questi casi.
+- **Perché qui**: serviva un menu a tendina sotto l'icona. Prima il menu era un `<dialog>` modale al centro; scriverne uno a mano richiedeva di gestire clic esterni, Esc e focus.
+- **Alternative**: `<dialog>` (modale, già usato per gli avvisi), `<details>` (non si chiude da solo con un clic fuori), una libreria di menu (dipendenza in più).
+- **Supporto**: Safari 17, Chrome 114, Firefox 125 e successivi (dal 2024). Su browser più vecchi l'icona non apre il menu.
+- **Nel codice**: `accountButton()` in `app.js`; l'evento `beforetoggle` colora l'icona e posiziona il menu sotto di essa.
+- **Esercizio**: apri il menu, poi nella console del browser scrivi `document.getElementById('account-menu').hidePopover()` e guarda che si chiude come con Esc.
+
+**Tema chiaro/scuro con scelta manuale**: i colori sono variabili CSS (`--bg`, `--ink`, `--cta`…). `@media (prefers-color-scheme: dark)` applica quelli scuri quando il sistema è scuro, salvo che `<html>` abbia `data-theme="light"`; con `data-theme="dark"` si applicano sempre. La scelta resta nel `localStorage` (`barberbook.theme`). Esercizio: scegli "Scuro" dal menu, poi nella console scrivi `localStorage.getItem('barberbook.theme')` e ricarica la pagina.
+
+**Font copiato nel sito (`@font-face`)**: il file `.woff2` sta in `fonts/` e `style.css` lo dichiara con `@font-face`. Così nessuna richiesta parte verso Google Fonts (privacy e CSP intatte). Il file viene dal pacchetto `@fontsource/oswald@5.2.8` (solo caratteri latini, peso 500, 12,7 KB). Se il font non si carica, i titoli usano Avenir Next Condensed, Arial Narrow o il sans-serif di sistema.

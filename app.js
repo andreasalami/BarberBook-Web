@@ -18,6 +18,21 @@ const ROLE = pref('barberbook.role'), SHOP_CODE = pref('barberbook.shopCode'), N
  *  for Google again even if a session exists. A fresh visit as owner does not ask. */
 const OWNER_SIGN_IN = pref('barberbook.ownerSignIn', false)
 const DEMO = pref('barberbook.demo', false)
+const THEME = pref('barberbook.theme')
+
+/** '' follows the system; 'light' or 'dark' is the user's choice from the account menu. */
+const THEMES = [['', 'Auto'], ['light', 'Chiaro'], ['dark', 'Scuro']]
+const THEME_COLOR = { light: '#ffffff', dark: '#111214' }
+const currentTheme = () => { const t = THEME.get(); return THEMES.some(([v]) => v === t) ? t : '' }
+function applyTheme() {
+  const theme = currentTheme(), root = document.documentElement
+  if (theme) root.dataset.theme = theme
+  else delete root.dataset.theme
+  // The browser bar: one meta per system scheme; a chosen theme paints both.
+  for (const meta of document.querySelectorAll('meta[name="theme-color"]'))
+    meta.content = THEME_COLOR[theme || (meta.media.includes('dark') ? 'dark' : 'light')]
+}
+applyTheme()
 
 /** Open the site with ?demo to try every screen with in-memory data and no network (as `-demo YES` on the iPhone). */
 const demo = new URLSearchParams(location.search).has('demo') || DEMO.get() === '1'
@@ -342,6 +357,11 @@ const ICON = {
   more: 'M6 12h.01M12 12h.01M18 12h.01',
   left: 'M15 6l-6 6 6 6',
   right: 'M9 6l6 6-6 6',
+  swap: 'M4 8h15l-4-4M20 16H5l4 4',
+  login: 'M14 4h5v16h-5M10 8l4 4-4 4M14 12H4',
+  logout: 'M10 4H5v16h5M15 8l4 4-4 4M19 12H9',
+  trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',
+  theme: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 3v18',
 }
 function icon(name) {
   const NS = 'http://www.w3.org/2000/svg'
@@ -455,7 +475,7 @@ function roleChoiceView() {
 function shopPickerView() {
   let code = ''
   const open = h('button', { type: 'submit', class: 'primary', disabled: true }, 'Apri il negozio')
-  return page(header('Il tuo negozio', textButton(switchRoleLabel(), switchRole)),
+  return page(header('Il tuo negozio', accountButton()),
     h('form', { onsubmit: e => { e.preventDefault(); if (code.trim().length >= 4) openShop(code) } },
       section(null, h('div', { class: 'card' }, h('input', { class: 'code-input', placeholder: 'Codice del negozio',
         'aria-label': 'Codice del negozio', autocapitalize: 'characters', autocomplete: 'off', autocorrect: 'off', spellcheck: false,
@@ -472,11 +492,11 @@ const signInButtons = () => h('div', { class: 'stack' },
 
 /** Owner: Google. The account only links the owner to their shop. */
 function ownerSignInView() {
-  return h('main', { class: 'hero' }, icon('store'), h('h1', {}, 'Accesso titolare'),
-    h('p', { class: 'secondary' }, 'Accedi per creare o gestire il tuo negozio.'),
-    signInButtons(),
-    demo && textButton('Entra nella demo', () => { setOwnerSignInRequired(false); render(); enterTab() }, 'secondary-button'),
-    textButton(switchRoleLabel(), switchRole))
+  return page(h('div', { class: 'bar end' }, accountButton()),
+    h('div', { class: 'hero inset' }, icon('store'), h('h1', {}, 'Accesso titolare'),
+      h('p', { class: 'secondary' }, 'Accedi per creare o gestire il tuo negozio.'),
+      signInButtons(),
+      demo && textButton('Entra nella demo', () => { setOwnerSignInRequired(false); render(); enterTab() }, 'secondary-button')))
 }
 
 /** Customer, optional: an account only lets them find their bookings again on another phone or computer. */
@@ -489,9 +509,7 @@ function customerSignIn() {
 function setupView() {
   let name = ''
   const create = h('button', { type: 'submit', class: 'primary', disabled: true }, 'Crea il negozio')
-  const menu = () => showAlert(null, null, [{ label: 'Esci', value: 'out' }, { label: switchRoleLabel(), value: 'switch' },
-    { label: 'Annulla', cancel: true }]).then(v => v === 'out' ? signOut() : v === 'switch' && switchRole())
-  return page(header('Nuovo negozio', textButton('Account', menu)),
+  return page(header('Nuovo negozio', accountButton()),
     h('form', { onsubmit: e => { e.preventDefault(); if (name.trim()) createShop(name.trim()) } },
       section(null, h('div', { class: 'card' }, 'Crea il tuo negozio. Riceverai un codice e un QR da dare ai clienti: lo inquadrano e prenotano subito da te.')),
       section('Nome del negozio', h('div', { class: 'card' }, h('input', { placeholder: 'Es. Barberia Da Mario', 'aria-label': 'Nome del negozio',
@@ -499,40 +517,70 @@ function setupView() {
       create))
 }
 
-/** Account menu, top right of every tab, for customers and owners alike. Everyday actions first, account next,
- *  the destructive one last. Owners have no "Cambia negozio": an account owns exactly one shop. */
-async function accountMenu(isOwner) {
-  const choice = await showAlert('Account', null, [
-    !isOwner && { label: 'Cambia negozio', value: 'leave' },
-    { label: switchRoleLabel(), value: 'switch' },
-    S.signedIn ? { label: "Esci dall'account", value: 'out' } : { label: 'Accedi con Google', value: 'in' },
-    { label: isOwner ? 'Elimina account e negozio' : 'Elimina i miei dati', value: 'delete', destructive: true },
-    { label: 'Annulla', cancel: true },
-  ])
-  if (choice === 'leave') leaveShop()
-  if (choice === 'switch') switchRole()
-  if (choice === 'out') signOut()
-  if (choice === 'in') customerSignIn()
-  if (choice === 'delete' && await confirmBox(isOwner ? 'Eliminare account e negozio?' : 'Eliminare i tuoi dati?',
+/** Account menu items for the current screen. Everyday actions first, account next, the destructive one last.
+ *  Owners have no "Cambia negozio": an account owns exactly one shop. */
+function accountItems() {
+  const isOwner = S.role === 'owner'
+  const swap = { label: switchRoleLabel(), glyph: 'swap', run: switchRole }
+  if (isOwner ? !S.signedIn || S.ownerSignInRequired : !S.shop) return [swap] // owner sign-in, customer shop picker
+  if (isOwner && !S.shop) return [swap, { label: 'Esci', glyph: 'logout', run: signOut }] // new shop
+  return [
+    !isOwner && { label: 'Cambia negozio', glyph: 'store', run: leaveShop },
+    swap,
+    S.signedIn ? { label: "Esci dall'account", glyph: 'logout', run: signOut } : { label: 'Accedi con Google', glyph: 'login', run: customerSignIn },
+    { label: isOwner ? 'Elimina account e negozio' : 'Elimina i miei dati', glyph: 'trash', danger: true, run: () => removeAccount(isOwner) },
+  ].filter(Boolean)
+}
+
+async function removeAccount(isOwner) {
+  if (await confirmBox(isOwner ? 'Eliminare account e negozio?' : 'Eliminare i tuoi dati?',
     isOwner ? 'Vengono cancellati il negozio, operatori, servizi e tutte le prenotazioni dei clienti. Non si può annullare.'
       : 'Le tue prenotazioni vengono cancellate e i negozi non vedranno più il tuo nome. Non si può annullare.',
     isOwner ? 'Elimina tutto' : 'Elimina') && await deleteAccount()) setRole('')
 }
-const accountButton = isOwner => textButton('Account', () => accountMenu(isOwner))
+
+/** Theme choice inside the menu: applies at once and keeps the menu open. */
+const themeRow = () => h('div', { class: 'menu-theme' }, icon('theme'),
+  h('div', { class: 'segments', role: 'group', 'aria-label': 'Tema' }, THEMES.map(([value, label]) =>
+    h('button', { type: 'button', 'aria-pressed': String(currentTheme() === value), onclick: e => {
+      THEME.set(value || null); applyTheme()
+      for (const b of e.currentTarget.parentElement.children) b.setAttribute('aria-pressed', String(b === e.currentTarget))
+    } }, label))))
+
+/** Account menu, top right of every screen for customers and owners alike: an icon that drops a list (native popover:
+ *  closes on a tap outside or Esc). Only one per screen, so a fixed id is enough. */
+function accountButton() {
+  const items = accountItems()
+  const menu = h('div', { id: 'account-menu', popover: '', class: 'menu' })
+  const button = h('button', { type: 'button', class: 'menu-button', popovertarget: 'account-menu', 'aria-label': 'Account e tema' }, icon('person'))
+  const item = i => h('button', { type: 'button', class: i.danger ? 'menu-item danger' : 'menu-item',
+    onclick: () => { menu.hidePopover(); i.run() } }, icon(i.glyph), i.label)
+  menu.append(...items.filter(i => !i.danger).map(item), themeRow(), ...items.filter(i => i.danger).map(item))
+  menu.addEventListener('beforetoggle', e => {
+    const open = e.newState === 'open'
+    button.classList.toggle('open', open)
+    if (!open) return
+    // Below the icon, right edges aligned; absolute in the top layer = page coordinates, so it scrolls with the page.
+    const r = button.getBoundingClientRect()
+    menu.style.top = `${r.bottom + scrollY + 6}px`
+    menu.style.right = `${document.documentElement.clientWidth - r.right}px`
+  })
+  return [button, menu]
+}
 
 // MARK: Booking form (customers book for themselves, the owner for a walk-in or a phone call)
 
 const newForm = isOwner => ({ isOwner, serviceID: S.services[0]?.id, staffID: S.staff[0]?.id, day: startOfDay(new Date()),
   slots: [], slot: null, name: isOwner ? '' : NAME.get() ?? '', saving: false, request: 0 })
 
-function bookView() { return page(header('Prenota', accountButton(false)), bookingForm(S.form ??= newForm(false), render)) }
+function bookView() { return page(header('Prenota', accountButton()), bookingForm(S.form ??= newForm(false), render)) }
 
 function bookingForm(f, rerender) {
   if (!S.services.length || !S.staff.length) return section(null, h('div', { class: 'card' }, 'Il negozio non ha ancora pubblicato servizi e operatori. Riprova più tardi.'))
   const change = patch => { Object.assign(f, patch); rerender(); loadSlots(f, rerender) }
   const row = (label, control) => h('label', { class: 'row' }, h('span', {}, label), control)
   const book = h('button', { type: 'button', class: 'primary', disabled: !f.name.trim() || f.saving, onclick: () => confirmBooking(f, rerender) },
-    f.saving ? 'Prenotazione in corso…' : f.slot && `Prenota alle ${time(f.slot)}`)
+    f.saving ? 'Prenotazione in corso…' : f.slot && ['Prenota ', h('span', { 'aria-hidden': 'true' }, '→')])
   return h('div', { class: 'booking' },
     section('Appuntamento', h('div', { class: 'card rows' },
       row('Servizio', h('select', { value: f.serviceID, onchange: e => change({ serviceID: e.target.value }) },
@@ -612,7 +660,7 @@ function bookingCard(b, { showShop, cancelTitle, onCancel, calendar = false }) {
 
 /** Customer: future bookings in every shop as cards, cancel from the card. */
 function mineView() {
-  return page(header('Le mie prenotazioni', accountButton(false)), S.mine.length
+  return page(header('Le mie prenotazioni', accountButton()), S.mine.length
     ? h('div', { class: 'card-grid' }, S.mine.map(b => bookingCard(b, { showShop: true, cancelTitle: 'Disdici', calendar: true, onCancel: cancelMine })))
     : h('p', { class: 'empty secondary' }, 'Nessuna prenotazione futura.'))
 }
@@ -650,8 +698,9 @@ function agendaView() {
         h('span', { class: 'secondary small' }, b.service_name)))]
   }
   return page(
-    header('Agenda', accountButton(true),
-      h('button', { type: 'button', class: 'icon-button', 'aria-label': 'Nuovo appuntamento', onclick: newAppointment }, icon('plus'))),
+    header('Agenda',
+      h('button', { type: 'button', class: 'icon-button', 'aria-label': 'Nuovo appuntamento', onclick: newAppointment }, icon('plus')),
+      accountButton()),
     h('div', { class: 'card period' },
       h('button', { type: 'button', class: 'icon-button', 'aria-label': 'Giorni precedenti', onclick: () => moveAgenda(addDays(start, -SPAN)) }, icon('left')),
       h('input', { type: 'date', 'aria-label': 'Dal', value: dayValue(start), onchange: e => e.target.value && moveAgenda(parseDay(e.target.value)) }),
@@ -703,7 +752,7 @@ function openDetail(b) {
 
 let qrCache = { link: '', src: '' }
 
-/** Owner: customer code and QR, opening hours, staff, services. Account actions are in the Account menu. */
+/** Owner: customer code and QR, opening hours, staff, services. Account actions are in the account menu (icon top right). */
 function settingsView() {
   const shop = S.shop
   const link = shopLink(shop.code)
@@ -713,7 +762,7 @@ function settingsView() {
     S.newStaff = ''
     saveStaff({ id: crypto.randomUUID(), shop_id: shop.id, name })
   } }, 'Aggiungi')
-  return page(header(shop.name, accountButton(true)),
+  return page(header(shop.name, accountButton()),
     section('Codice per i clienti', h('div', { class: 'card qr printable' },
       h('img', { src: qrCache.src, alt: 'Codice QR del negozio', class: 'qr-image', width: '200', height: '200' }),
       h('div', { class: 'code-big' }, shop.code),
