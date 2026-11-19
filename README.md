@@ -103,7 +103,7 @@ Stessi dati e stesse regole dell'app iPhone (tabella completa nel [README dell'a
 
 GitHub Pages diventa un fornitore in più: serve solo i file statici, non riceve dati delle prenotazioni.
 
-L'informativa per clienti e titolari è nel sito: menu account → **Privacy** (`openPrivacy` in `app.js`, contatto in `PRIVACY_CONTACT`). Se cambiano i dati raccolti, aggiornare insieme questa tabella e quella pagina.
+L'informativa per clienti e titolari è la pagina [`privacy.html`](privacy.html), aperta dal menu account → **Privacy** e collegata alla schermata di consenso di Google. Se cambiano i dati raccolti, aggiornare insieme questa tabella e quella pagina.
 
 ## Limiti noti
 
