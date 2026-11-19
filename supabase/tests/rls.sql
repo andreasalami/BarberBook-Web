@@ -28,6 +28,11 @@ do $$ begin
     raise exception 'FAIL: shop code format';
   end if;
   begin
+    insert into public.services (shop_id, name, minutes, price_cents) values ('a1000000-0000-4000-8000-000000000000', 'Barba', 15, 1000);
+    raise exception 'FAIL: 15-minute service accepted';
+  exception when check_violation then null;
+  end;
+  begin
     insert into public.shops (name, week) values ('Second shop', '[null,null,null,null,null,null,null]');
     raise exception 'FAIL: owner created a second shop';
   exception when unique_violation then null;
@@ -112,7 +117,7 @@ do $$ begin
   begin
     insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
       ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Carlo',
-       public.t(7, '18:45'), public.t(7, '19:15'));
+       public.t(7, '19:00'), public.t(7, '19:30'));
     raise exception 'FAIL: booked past closing time';
   exception when check_violation then null;
   end;
@@ -121,6 +126,13 @@ do $$ begin
       ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Carlo',
        public.t(7, '08:30'), public.t(7, '09:00'));
     raise exception 'FAIL: booked before opening time';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
+      ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Carlo',
+       public.t(7, '12:15'), public.t(7, '12:45'));
+    raise exception 'FAIL: booked off the 30-minute grid';
   exception when check_violation then null;
   end;
   begin
@@ -160,7 +172,7 @@ begin
   begin
     insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
       ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Dora',
-       public.t(7, '10:15'), public.t(7, '10:45'));
+       public.t(7, '10:00'), public.t(7, '10:30'));
     raise exception 'FAIL: overlapping booking accepted';
   exception when exclusion_violation then null;
   end;

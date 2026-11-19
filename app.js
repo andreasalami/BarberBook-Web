@@ -818,7 +818,7 @@ async function removeService(service) {
 function openService(service) {
   const draft = { ...service }
   let price = (service.price_cents / 100).toFixed(2).replace('.', ',')
-  const durations = [...new Set([...Array.from({ length: 240 / STEP }, (_, i) => (i + 1) * STEP), draft.minutes])].sort((a, b) => a - b)
+  const durations = Array.from({ length: 240 / STEP }, (_, i) => (i + 1) * STEP) // the slot grid, as the database requires
   openSheet(() => {
     const save = h('button', { type: 'button', class: 'link strong', onclick: async () => {
       const c = cents(price)
@@ -871,7 +871,7 @@ function openHours() {
 function demoData() {
   const shop = { id: 'demo-shop', code: 'BARBA2', name: 'Barberia Demo', week: defaultWeek() }
   const staff = ['Luca', 'Marco'].map(name => ({ id: `demo-${name}`, shop_id: shop.id, name }))
-  const services = [['Barba', 15, 1000], ['Taglio', 30, 1500], ['Taglio e barba', 45, 2300]]
+  const services = [['Barba', 30, 1000], ['Taglio', 30, 1500], ['Taglio e barba', 60, 2300]]
     .map(([name, minutes, price_cents]) => ({ id: `demo-${name}`, shop_id: shop.id, name, minutes, price_cents }))
   // (days from today, hour, minute, staff index, service index, customer)
   const samples = [[0, 18, 30, 0, 1, 'Cliente al banco'], [1, 9, 30, 1, 0, 'Giulia'], [1, 11, 0, 0, 1, 'Paolo'],
