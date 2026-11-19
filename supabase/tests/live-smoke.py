@@ -41,8 +41,10 @@ tok = r["access_token"]
 s, r = call("GET", "/rest/v1/shops?select=*", token=tok)
 check("read shops as anonymous", s == 200 and isinstance(r, list), f"{s} {r}")
 
-s, r = call("GET", "/rest/v1/shops?select=*")  # no session: anon role
-check("keyless read refused", s in (401, 403), f"{s} {r}")
+s, r = call("GET", "/rest/v1/shops?select=code")  # no session: anon role may browse the catalogue (since 20261118120000)
+check("keyless catalogue read allowed", s == 200 and isinstance(r, list), f"{s} {r}")
+s, r = call("GET", "/rest/v1/bookings?select=*")
+check("keyless bookings read refused", s in (401, 403), f"{s} {r}")
 
 s, r = call("POST", "/rest/v1/shops", {"name": "Fake", "week": [None] * 7}, token=tok, prefer="return=representation")
 check("anonymous cannot create shop (42501)", s in (401, 403) and isinstance(r, dict) and r.get("code") == "42501", f"{s} {r}")
