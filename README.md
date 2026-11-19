@@ -114,7 +114,7 @@ Oltre a quelli dell'app iPhone (orari mostrati nell'ora del telefono: il server 
 - **Promemoria**: il file `.ics` va aggiunto al calendario a mano; se poi si disdice, l'evento resta nel calendario e va tolto a mano.
 - **Accesso con Google dall'icona sulla schermata Home (iPhone)**: iOS può completare l'accesso in Safari invece che nell'icona, e l'accesso non si chiude. In quel caso si accede dalla pagina in Safari. La prenotazione da cliente non ne risente.
 - **Cliente senza account**: le prenotazioni sono legate a questo browser. Cambiando browser o cancellando i dati del sito non le vede più (restano valide in negozio). Con Google le ritrova.
-- Il pulsante Google è testuale: prima di aprire l'accesso a tutti va usato lo stile ufficiale Google e pubblicato il client OAuth (oggi in modalità *Testing*, solo utenti di test).
+- Il client OAuth Google è in produzione dal 19/11/2026 (home page e `privacy.html` nel Branding, nessun logo, quindi nessuna verifica Google). Il pulsante è testuale: prima di una diffusione ampia va portato allo stile ufficiale Google.
 - Agenda aggiornata ogni 2 minuti mentre è aperta, e quando si torna sulla pagina.
 
 ## Verifica eseguita (18/11/2026)
