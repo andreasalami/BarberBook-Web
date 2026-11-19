@@ -33,6 +33,8 @@ function applyTheme() {
     meta.content = THEME_COLOR[theme || (meta.media.includes('dark') ? 'dark' : 'light')]
 }
 applyTheme()
+// iOS Safari shows :active (the pressed booking button) only when the page listens to touches.
+document.addEventListener('touchstart', () => {}, { passive: true })
 
 /** Open the site with ?demo to try every screen with in-memory data and no network (as `-demo YES` on the iPhone). */
 const demo = new URLSearchParams(location.search).has('demo') || DEMO.get() === '1'
@@ -579,7 +581,7 @@ function bookingForm(f, rerender) {
   if (!S.services.length || !S.staff.length) return section(null, h('div', { class: 'card' }, 'Il negozio non ha ancora pubblicato servizi e operatori. Riprova più tardi.'))
   const change = patch => { Object.assign(f, patch); rerender(); loadSlots(f, rerender) }
   const row = (label, control) => h('label', { class: 'row' }, h('span', {}, label), control)
-  const book = h('button', { type: 'button', class: 'primary', disabled: !f.name.trim() || f.saving, onclick: () => confirmBooking(f, rerender) },
+  const book = h('button', { type: 'button', class: f.saving ? 'primary pressed' : 'primary', disabled: !f.name.trim() || f.saving, onclick: () => confirmBooking(f, rerender) },
     f.saving ? 'Prenotazione in corso…' : f.slot && ['Prenota ', h('span', { 'aria-hidden': 'true' }, '→')])
   return h('div', { class: 'booking' },
     section('Appuntamento', h('div', { class: 'card rows' },
@@ -594,7 +596,7 @@ function bookingForm(f, rerender) {
       placeholder: f.isOwner ? 'Nome del cliente' : 'Scrivi qui il tuo nome', 'aria-label': f.isOwner ? 'Nome del cliente' : 'Il tuo nome',
       autocomplete: f.isOwner ? 'off' : 'name', maxlength: '60', value: f.name,
       oninput: e => { f.name = e.target.value; book.disabled = !f.name.trim() || f.saving } })),
-      !f.isOwner && h('p', { class: 'footer' }, "Il nome è visibile solo a te e al negozio. Il sito non manda promemoria: dopo la prenotazione aggiungila al calendario per ricevere un avviso un'ora prima.")),
+      !f.isOwner && h('p', { class: 'footer' }, "Il nome lo vedete solo tu e il negozio. Il sito non manda promemoria: aggiungi la prenotazione al calendario.")),
     section('Orari liberi', h('div', { class: 'card slots' }, f.slots.length
       ? h('div', { class: 'slot-grid' }, f.slots.map(s => {
           const selected = f.slot?.getTime() === s.getTime()
@@ -635,8 +637,9 @@ async function confirmBooking(f, rerender) {
   if (!f.isOwner) NAME.set(customer)
   loadSlots(f, rerender)
   // Customers get no other reminder (no push, no email): without the calendar event the booking is easy to forget.
-  await showAlert('Prenotazione confermata', `${booking.service_name} con ${staffName(booking.staff_id)}, ${fullDate(booking.starts_at)}.`
-    + (f.isOwner ? '' : "\n\nIl sito non manda promemoria. Se non la aggiungi al calendario rischi di dimenticarla: il calendario ti avvisa un'ora prima."),
+  await showAlert('Prenotazione confermata', [
+    !f.isOwner && h('strong', { class: 'alert-warning' }, 'Aggiungila al calendario: il sito non ti manda promemoria.'),
+    `${booking.service_name} con ${staffName(booking.staff_id)}, ${fullDate(booking.starts_at)}.`],
     f.isOwner ? [{ label: 'OK' }] : [{ label: 'Aggiungi al calendario', action: () => addToCalendar(booking) }, { label: 'OK' }])
   if (f.isOwner) closeSheet()
 }

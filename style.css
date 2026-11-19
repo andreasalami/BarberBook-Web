@@ -155,8 +155,12 @@ h1, .group > h2, .day-title h3, .big, .primary, .tab, .code-big { font-family: v
   grid-column: 1 / -1; display: flex; justify-content: center;
 }
 .sheet .bookbar { bottom: 0; }
-.bookbar .primary { width: auto; min-width: 180px; padding: 6px 32px; }
+.bookbar .primary { width: auto; min-width: 180px; padding: 6px 32px; transition: transform .08s ease-out, box-shadow .08s ease-out; }
 .bookbar .primary:enabled { box-shadow: 4px 4px 0 var(--ink); }
+/* Pressed: the red face slides onto its shadow, and stays there while the booking is sent. */
+.bookbar .primary:enabled:active, .bookbar .primary.pressed {
+  transform: translate(4px, 4px); box-shadow: 0 0 0 var(--ink); background: var(--cta); color: #fff; border-color: var(--ink);
+}
 @media (min-width: 720px) {
   .booking { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-areas: "a s" "n s" "b b"; align-items: start; }
   .booking > :nth-child(1) { grid-area: a; }
@@ -215,7 +219,9 @@ dialog { border: 0; padding: 0; color: var(--text); background: none; max-width:
 dialog::backdrop { background: rgba(0, 0, 0, .45); }
 .alert-box { width: min(300px, calc(100vw - 48px)); background: var(--bg); border: var(--line) solid var(--ink); overflow: hidden; text-align: center; }
 .alert-box h2 { margin: 20px 16px 4px; font-size: 17px; }
-.alert-box p { margin: 4px 16px 16px; font-size: 14px; white-space: pre-line; }
+.alert-box p { margin: 4px 16px 16px; font-size: 14px; }
+/* A warning the reader must not miss: red block above the details. */
+.alert-warning { display: block; margin: 8px 0 12px; padding: 10px 12px; background: var(--cta); color: #fff; border: var(--line) solid var(--ink); font-size: 16px; }
 .alert-box h2 + .alert-buttons, .alert-box > .alert-buttons:first-child { margin-top: 0; }
 .alert-buttons { display: flex; border-top: var(--line) solid var(--ink); }
 .alert-buttons.vertical { flex-direction: column; }
