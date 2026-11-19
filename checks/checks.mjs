@@ -3,7 +3,7 @@
 // With an argument, also writes QR matrices for checks/qr-decode.swift (see README → Controlli).
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
-import { freeStarts, cents, defaultWeek, hhmm, ics } from '../logic.js'
+import { freeStarts, cents, defaultWeek, hhmm, ics, isOutside } from '../logic.js'
 import { qr } from '../qr.js'
 
 const at = (day, h, m = 0) => new Date(2026, 10, day, h, m)
@@ -25,6 +25,12 @@ assert(!freeStarts(tuesday, week, 30, [{ start: at(17, 11, 15), end: at(17, 11, 
 assert.equal(hm(freeStarts(tuesday, week, 30, [], at(17, 12))[0]), '12:30')
 // Service longer than the opening window.
 assert.deepEqual(freeStarts(tuesday, [{ open: 540, close: 560 }, null, null, null, null, null, null], 30, [], past), [])
+
+// Bookings left outside new opening hours (Tuesday open 09:00-19:00, Monday closed).
+assert(!isOutside(at(17, 18, 30), at(17, 19), week))
+assert(isOutside(at(17, 18, 30), at(17, 19, 30), week))
+assert(isOutside(at(17, 8, 30), at(17, 9), week))
+assert(isOutside(at(16, 10), at(16, 10, 30), week))
 
 // Prices typed by the owner: Italian comma or dot; junk and out-of-range values refused.
 assert.equal(cents('15'), 1500); assert.equal(cents('15,5'), 1550); assert.equal(cents(' 15.50 '), 1550)

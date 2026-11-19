@@ -3,7 +3,7 @@
 // owners sign in with Google and create or manage their own shop. The server enforces who may do what (RLS).
 import * as api from './api.js'
 import { addDays, cents, dayValue, defaultWeek, freeStarts, fullDate, hhmm, ics, longDay, parseDay, priceText as formatPrice,
-  sameDay, shortDate, startOfDay, STEP, time } from './logic.js'
+  sameDay, shortDate, startOfDay, STEP, time, isOutside } from './logic.js'
 import { qrDataURL } from './qr.js'
 
 // MARK: Storage (UserDefaults on the iPhone)
@@ -848,7 +848,8 @@ function openHours() {
     times.map(t => h('option', { value: String(t) }, hhmm(t))))
   openSheet(() => {
     const save = h('button', { type: 'button', class: 'link strong', disabled: !valid(), onclick: async () => {
-      if (valid() && await saveShop({ ...draft, name: draft.name.trim() })) { closeSheet(); render() }
+      if (!valid() || !await hoursConfirmed(draft.week)) return
+      if (await saveShop({ ...draft, name: draft.name.trim() })) { closeSheet(); render() }
     } }, 'Salva')
     return sheetPage('Orari', [textButton('Annulla', closeSheet), save],
       section('Nome', h('div', { class: 'card' }, h('input', { 'aria-label': 'Nome del negozio', maxlength: '80', value: draft.name,
@@ -863,6 +864,22 @@ function openHours() {
           d && d.close <= d.open && h('p', { class: 'row danger' }, "La chiusura deve essere dopo l'apertura.")))
       }))
   })
+}
+
+/** Asks first when new hours leave upcoming bookings outside; those already outside the old hours are not listed
+ *  again. Bookings stay: the owner warns the customers or cancels from the agenda. false: do not save. */
+async function hoursConfirmed(week) {
+  const now = new Date()
+  const upcoming = await agendaBookings(startOfDay(now), 366)
+  if (!upcoming) return false
+  const left = upcoming.filter(b => b.ends_at > now && isOutside(b.starts_at, b.ends_at, week)
+    && !isOutside(b.starts_at, b.ends_at, S.shop.week))
+  if (left.length === 0) return true
+  const lines = left.slice(0, 5).map(b => `${shortDate(b.starts_at)} · ${b.service_name} · ${b.customer_name}`)
+  if (left.length > 5) lines.push(`e altri ${left.length - 5}`)
+  return showAlert(left.length === 1 ? '1 appuntamento resta fuori orario' : `${left.length} appuntamenti restano fuori orario`,
+    `${lines.join('\n')}\n\nRestano in agenda: avvisa tu i clienti, o disdici dall'agenda.`,
+    [{ label: 'Salva comunque', value: true }, { label: 'Annulla', value: false, cancel: true }])
 }
 
 // MARK: Demo
