@@ -22,6 +22,13 @@ export function freeStarts(day, week, duration, busy, now) {
   return result
 }
 
+/** True when an appointment (local time) does not fit inside the opening hours of its day, or the day is closed. */
+export function isOutside(start, end, week) {
+  const hours = week[start.getDay()]
+  const minutes = d => d.getHours() * 60 + d.getMinutes()
+  return !hours || start.toDateString() !== end.toDateString() || minutes(start) < hours.open || minutes(end) > hours.close
+}
+
 /**
  * What the owner types as a price: "15", "15,5" or "15.50" → 1550. null when it is not a number or outside
  * what the database accepts (0 to 10 000 €).

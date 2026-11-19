@@ -3,7 +3,7 @@
 // owners sign in with Google and create or manage their own shop. The server enforces who may do what (RLS).
 import * as api from './api.js'
 import { addDays, cents, dayValue, defaultWeek, freeStarts, fullDate, hhmm, ics, longDay, parseDay, priceText as formatPrice,
-  sameDay, shortDate, startOfDay, STEP, time } from './logic.js'
+  sameDay, shortDate, startOfDay, STEP, time, isOutside } from './logic.js'
 import { qrDataURL } from './qr.js'
 
 // MARK: Storage (UserDefaults on the iPhone)
@@ -195,9 +195,11 @@ async function saveShop(updated) {
 }
 
 async function saveStaff(member) {
+  let saved = true
   if (demo) { D.staff.push(member); S.staff = [...D.staff] }
-  else await run(async () => { await api.upsert('staff', member); await reloadCatalog() })
+  else saved = await run(async () => { await api.upsert('staff', member); await reloadCatalog() })
   render()
+  return saved
 }
 
 async function saveService(service) {
@@ -233,13 +235,14 @@ async function deleteRow(table, id) {
 
 const toBooking = b => ({ ...b, starts_at: new Date(b.starts_at), ends_at: new Date(b.ends_at) })
 
-/** Busy intervals of one staff member on `day`, without names (database function `busy`). */
+/** Busy intervals of one staff member on `day`, without names (database function `busy`).
+ *  null on failure: the form must not show every time as free. */
 async function busy(staffID, day) {
   const from = startOfDay(day), to = addDays(from, 1)
   if (demo) return D.bookings.filter(b => b.staff_id === staffID && b.starts_at < to && b.ends_at > from)
     .map(b => ({ start: b.starts_at, end: b.ends_at }))
-  const rows = await attempt(() => api.rpc('busy', { p_staff: staffID, p_from: from.toISOString(), p_to: to.toISOString() })) ?? []
-  return rows.map(r => ({ start: new Date(r.starts_at), end: new Date(r.ends_at) }))
+  const rows = await attempt(() => api.rpc('busy', { p_staff: staffID, p_from: from.toISOString(), p_to: to.toISOString() }))
+  return rows?.map(r => ({ start: new Date(r.starts_at), end: new Date(r.ends_at) })) ?? null
 }
 
 /** The database refuses overlapping bookings of the same staff member (exclusion constraint), so two customers
@@ -281,14 +284,14 @@ async function agendaBookings(from, days, quiet = false) {
   return attempt(work)
 }
 
-/** Customer: own upcoming (and in progress) bookings in every shop. */
+/** Customer: own upcoming (and in progress) bookings in every shop. null on failure, so the list keeps what it shows. */
 async function myBookings() {
   const now = new Date()
   if (demo) return D.bookings.filter(b => b.ends_at > now && !D.ownerBookings.has(b.id)).sort((a, b) => a.starts_at - b.starts_at)
   const me = api.user()?.id
   if (!me) return []
   return await attempt(async () => (await api.select('bookings', [['select', '*,shops(name,services(name,price_cents)),staff(name)'],
-    ['customer_id', `eq.${me}`], ['ends_at', `gt.${now.toISOString()}`], ['order', 'starts_at']])).map(toBooking)) ?? []
+    ['customer_id', `eq.${me}`], ['ends_at', `gt.${now.toISOString()}`], ['order', 'starts_at']])).map(toBooking))
 }
 
 /** Calendar file with an alarm one hour before: the web stand-in for the iPhone's local reminder. */
@@ -322,6 +325,7 @@ function message(e) {
     // Table checks answer in English ("new row … violates check constraint"); the booking rules answer in Italian.
     case '23514': return e.message.startsWith('new row') ? 'Testo troppo lungo o dati non validi.' : e.message
     case api.SESSION_EXPIRED: case 'offline': return e.message
+    case '23505': return 'Esiste già. Aggiorna e riprova.'
     case '42501': return 'Operazione non permessa con questo account.'
     case 'validation_failed':
       if (e.message.includes('provider is not enabled')) return 'Accesso con Google non ancora attivo su Supabase (Authentication → Sign In / Providers → Google).'
@@ -364,6 +368,7 @@ const ICON = {
   logout: 'M10 4H5v16h5M15 8l4 4-4 4M19 12H9',
   trash: 'M4 7h16M9 7V4h6v3M6 7l1 13h10l1-13',
   theme: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 3v18',
+  shield: 'M12 3l7 3v6c0 4-3 7-7 9-4-2-7-5-7-9V6z',
 }
 function icon(name) {
   const NS = 'http://www.w3.org/2000/svg'
@@ -511,8 +516,18 @@ function customerSignIn() {
 function setupView() {
   let name = ''
   const create = h('button', { type: 'submit', class: 'primary', disabled: true }, 'Crea il negozio')
+  // One tap only: a second insert would hit "one shop per owner" while the first is still in flight.
+  const submit = async e => {
+    e.preventDefault()
+    if (!name.trim() || create.disabled) return
+    create.disabled = true
+    create.textContent = 'Creazione in corso…'
+    await createShop(name.trim())
+    create.disabled = false
+    create.textContent = 'Crea il negozio'
+  }
   return page(header('Nuovo negozio', accountButton()),
-    h('form', { onsubmit: e => { e.preventDefault(); if (name.trim()) createShop(name.trim()) } },
+    h('form', { onsubmit: submit },
       section(null, h('div', { class: 'card' }, 'Crea il tuo negozio. Riceverai un codice e un QR da dare ai clienti: lo inquadrano e prenotano subito da te.')),
       section('Nome del negozio', h('div', { class: 'card' }, h('input', { placeholder: 'Es. Barberia Da Mario', 'aria-label': 'Nome del negozio',
         maxlength: '80', oninput: e => { name = e.target.value; create.disabled = !name.trim() } }))),
@@ -525,7 +540,8 @@ function accountItems() {
   const isOwner = S.role === 'owner'
   const swap = { label: switchRoleLabel(), glyph: 'swap', run: switchRole }
   if (isOwner ? !S.signedIn || S.ownerSignInRequired : !S.shop) return [swap] // owner sign-in, customer shop picker
-  if (isOwner && !S.shop) return [swap, { label: 'Esci', glyph: 'logout', run: signOut }] // new shop
+  if (isOwner && !S.shop) return [swap, { label: 'Esci', glyph: 'logout', run: signOut }, // new shop
+    { label: 'Elimina account', glyph: 'trash', danger: true, run: () => removeAccount(true) }]
   return [
     !isOwner && { label: 'Cambia negozio', glyph: 'store', run: leaveShop },
     swap,
@@ -535,10 +551,33 @@ function accountItems() {
 }
 
 async function removeAccount(isOwner) {
-  if (await confirmBox(isOwner ? 'Eliminare account e negozio?' : 'Eliminare i tuoi dati?',
-    isOwner ? 'Vengono cancellati il negozio, operatori, servizi e tutte le prenotazioni dei clienti. Non si può annullare.'
+  const ownsShop = isOwner && S.shop // an owner still on "Nuovo negozio" has an account but no shop yet
+  if (await confirmBox(ownsShop ? 'Eliminare account e negozio?' : isOwner ? "Eliminare l'account?" : 'Eliminare i tuoi dati?',
+    ownsShop ? 'Vengono cancellati il negozio, operatori, servizi e tutte le prenotazioni dei clienti. Non si può annullare.'
+      : isOwner ? 'Il tuo account viene cancellato. Non si può annullare.'
       : 'Le tue prenotazioni vengono cancellate e i negozi non vedranno più il tuo nome. Non si può annullare.',
-    isOwner ? 'Elimina tutto' : 'Elimina') && await deleteAccount()) setRole('')
+    ownsShop ? 'Elimina tutto' : 'Elimina') && await deleteAccount()) setRole('')
+}
+
+/** Privacy notice (GDPR art. 13), from the account menu on every screen. Facts match the README privacy table. */
+const PRIVACY_CONTACT = 'asalami27@gmail.com'
+function openPrivacy() {
+  const p = text => h('p', {}, text)
+  openSheet(() => sheetPage('Privacy', closeButton(), h('div', { class: 'card prose' },
+    h('h3', {}, 'Chi tratta i dati'),
+    p("Il negozio presso cui prenoti usa il tuo nome per gestire l'appuntamento. Il servizio BarberBook (questo sito e il suo database) li conserva per conto del negozio. Per qualsiasi richiesta scrivi a " + PRIVACY_CONTACT + '.'),
+    h('h3', {}, 'Quali dati'),
+    p("Clienti: il nome che scrivi (anche un soprannome), servizio, operatore, giorno e ora. Un identificativo anonimo generato dal server ti fa vedere solo le tue prenotazioni. Nessun telefono, nessuna email."),
+    p("Chi accede con Google (titolari, e clienti che lo scelgono): email, nome, foto e identificativo Google, usati solo per riconoscerti; i negozi non li vedono."),
+    p("Nel browser restano la sessione, il ruolo, il codice del negozio e l'ultimo nome usato."),
+    h('h3', {}, 'Perché'),
+    p("Solo per fissare e gestire l'appuntamento che chiedi (art. 6.1.b GDPR). Nessuna pubblicità, nessuna profilazione, nessuna statistica di navigazione."),
+    h('h3', {}, 'Dove'),
+    p("Database Supabase con server nell'Unione Europea (Francoforte). Le pagine sono servite da GitHub Pages, che vede l'indirizzo IP. Google solo se scegli di accedere con Google."),
+    h('h3', {}, 'Per quanto'),
+    p("Le prenotazioni, con il nome, vengono cancellate in automatico 30 giorni dopo l'appuntamento; anche i messaggi interni sulle prenotazioni spariscono entro 30 giorni. Un identificativo anonimo senza prenotazioni viene cancellato dopo 30 giorni. Un account Google resta finché non lo elimini."),
+    h('h3', {}, 'I tuoi diritti'),
+    p("Puoi disdire in ogni momento. Dal menu account, \"Elimina i miei dati\" cancella subito te e le tue prenotazioni. Puoi chiedere accesso, rettifica o cancellazione scrivendo a " + PRIVACY_CONTACT + " e fare reclamo al Garante per la protezione dei dati personali (garanteprivacy.it)."))))
 }
 
 /** Theme choice inside the menu: applies at once and keeps the menu open. */
@@ -557,7 +596,8 @@ function accountButton() {
   const button = h('button', { type: 'button', class: 'menu-button', popovertarget: 'account-menu', 'aria-label': 'Account e tema' }, icon('person'))
   const item = i => h('button', { type: 'button', class: i.danger ? 'menu-item danger' : 'menu-item',
     onclick: () => { menu.hidePopover(); i.run() } }, icon(i.glyph), i.label)
-  menu.append(...items.filter(i => !i.danger).map(item), themeRow(), ...items.filter(i => i.danger).map(item))
+  menu.append(...items.filter(i => !i.danger).map(item), item({ label: 'Privacy', glyph: 'shield', run: openPrivacy }), themeRow(),
+    ...items.filter(i => i.danger).map(item))
   menu.addEventListener('beforetoggle', e => {
     const open = e.newState === 'open'
     button.classList.toggle('open', open)
@@ -610,9 +650,11 @@ function bookingForm(f, rerender) {
 async function loadSlots(f, rerender) {
   const service = S.services.find(s => s.id === f.serviceID), request = ++f.request
   if (!service || !f.staffID || !S.shop) { f.slots = []; f.slot = null; rerender(); return }
+  const today = startOfDay(new Date())
+  if (f.day < today) f.day = today // page left open past midnight
   const intervals = await busy(f.staffID, f.day)
   if (request !== f.request) return // a newer choice replaced this one
-  f.slots = freeStarts(f.day, S.shop.week, service.minutes, intervals, new Date())
+  f.slots = intervals ? freeStarts(f.day, S.shop.week, service.minutes, intervals, new Date()) : []
   if (f.slot && !f.slots.some(s => s.getTime() === f.slot.getTime())) f.slot = null // a refresh keeps a time still free
   rerender()
 }
@@ -670,7 +712,7 @@ function mineView() {
     : h('p', { class: 'empty secondary' }, 'Nessuna prenotazione futura.'))
 }
 
-async function reloadMine() { S.mine = await myBookings(); render() }
+async function reloadMine() { const list = await myBookings(); if (list) { S.mine = list; render() } }
 
 async function cancelMine(b) {
   const yes = await showAlert('Disdire la prenotazione?', `${b.service_name}, ${shortDate(b.starts_at)}`,
@@ -762,10 +804,11 @@ function settingsView() {
   const shop = S.shop
   const link = shopLink(shop.code)
   if (qrCache.link !== link) qrCache = { link, src: qrDataURL(link) }
-  const add = h('button', { type: 'button', class: 'link', disabled: !S.newStaff.trim(), onclick: () => {
+  // The field is cleared only once the server saved the name, so a failure does not lose it.
+  const add = h('button', { type: 'button', class: 'link', disabled: !S.newStaff.trim(), onclick: async () => {
     const name = S.newStaff.trim()
-    S.newStaff = ''
-    saveStaff({ id: crypto.randomUUID(), shop_id: shop.id, name })
+    add.disabled = true
+    if (await saveStaff({ id: crypto.randomUUID(), shop_id: shop.id, name }) && S.newStaff.trim() === name) { S.newStaff = ''; render() }
   } }, 'Aggiungi')
   return page(header(shop.name, accountButton()),
     section('Codice per i clienti', h('div', { class: 'card qr printable' },
@@ -818,7 +861,7 @@ async function removeService(service) {
 function openService(service) {
   const draft = { ...service }
   let price = (service.price_cents / 100).toFixed(2).replace('.', ',')
-  const durations = [...new Set([...Array.from({ length: 240 / STEP }, (_, i) => (i + 1) * STEP), draft.minutes])].sort((a, b) => a - b)
+  const durations = Array.from({ length: 240 / STEP }, (_, i) => (i + 1) * STEP) // the slot grid, as the database requires
   openSheet(() => {
     const save = h('button', { type: 'button', class: 'link strong', onclick: async () => {
       const c = cents(price)
@@ -848,7 +891,8 @@ function openHours() {
     times.map(t => h('option', { value: String(t) }, hhmm(t))))
   openSheet(() => {
     const save = h('button', { type: 'button', class: 'link strong', disabled: !valid(), onclick: async () => {
-      if (valid() && await saveShop({ ...draft, name: draft.name.trim() })) { closeSheet(); render() }
+      if (!valid() || !await hoursConfirmed(draft.week)) return
+      if (await saveShop({ ...draft, name: draft.name.trim() })) { closeSheet(); render() }
     } }, 'Salva')
     return sheetPage('Orari', [textButton('Annulla', closeSheet), save],
       section('Nome', h('div', { class: 'card' }, h('input', { 'aria-label': 'Nome del negozio', maxlength: '80', value: draft.name,
@@ -865,13 +909,29 @@ function openHours() {
   })
 }
 
+/** Asks first when new hours leave upcoming bookings outside; those already outside the old hours are not listed
+ *  again. Bookings stay: the owner warns the customers or cancels from the agenda. false: do not save. */
+async function hoursConfirmed(week) {
+  const now = new Date()
+  const upcoming = await agendaBookings(startOfDay(now), 366)
+  if (!upcoming) return false
+  const left = upcoming.filter(b => b.ends_at > now && isOutside(b.starts_at, b.ends_at, week)
+    && !isOutside(b.starts_at, b.ends_at, S.shop.week))
+  if (left.length === 0) return true
+  const lines = left.slice(0, 5).map(b => `${shortDate(b.starts_at)} · ${b.service_name} · ${b.customer_name}`)
+  if (left.length > 5) lines.push(`e altri ${left.length - 5}`)
+  return showAlert(left.length === 1 ? '1 appuntamento resta fuori orario' : `${left.length} appuntamenti restano fuori orario`,
+    `${lines.join('\n')}\n\nRestano in agenda: avvisa tu i clienti, o disdici dall'agenda.`,
+    [{ label: 'Salva comunque', value: true }, { label: 'Annulla', value: false, cancel: true }])
+}
+
 // MARK: Demo
 
 /** In-memory shop for demo mode: code BARBA2, 2 staff, 3 services, sample bookings in the next days. */
 function demoData() {
   const shop = { id: 'demo-shop', code: 'BARBA2', name: 'Barberia Demo', week: defaultWeek() }
   const staff = ['Luca', 'Marco'].map(name => ({ id: `demo-${name}`, shop_id: shop.id, name }))
-  const services = [['Barba', 15, 1000], ['Taglio', 30, 1500], ['Taglio e barba', 45, 2300]]
+  const services = [['Barba', 30, 1000], ['Taglio', 30, 1500], ['Taglio e barba', 60, 2300]]
     .map(([name, minutes, price_cents]) => ({ id: `demo-${name}`, shop_id: shop.id, name, minutes, price_cents }))
   // (days from today, hour, minute, staff index, service index, customer)
   const samples = [[0, 18, 30, 0, 1, 'Cliente al banco'], [1, 9, 30, 1, 0, 'Giulia'], [1, 11, 0, 0, 1, 'Paolo'],

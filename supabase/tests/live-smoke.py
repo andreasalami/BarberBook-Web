@@ -41,8 +41,10 @@ tok = r["access_token"]
 s, r = call("GET", "/rest/v1/shops?select=*", token=tok)
 check("read shops as anonymous", s == 200 and isinstance(r, list), f"{s} {r}")
 
-s, r = call("GET", "/rest/v1/shops?select=*")  # no session: anon role
-check("keyless read refused", s in (401, 403), f"{s} {r}")
+s, r = call("GET", "/rest/v1/shops?select=code")  # no session: anon role may browse the catalogue (since 20261118120000)
+check("keyless catalogue read allowed", s == 200 and isinstance(r, list), f"{s} {r}")
+s, r = call("GET", "/rest/v1/bookings?select=*")
+check("keyless bookings read refused", s in (401, 403), f"{s} {r}")
 
 s, r = call("POST", "/rest/v1/shops", {"name": "Fake", "week": [None] * 7}, token=tok, prefer="return=representation")
 check("anonymous cannot create shop (42501)", s in (401, 403) and isinstance(r, dict) and r.get("code") == "42501", f"{s} {r}")
@@ -78,9 +80,16 @@ s, r = call("GET", "/rest/v1/bookings?select=*", token=tok2)
 check("customer 2 sees no bookings", s == 200 and r == [], f"{s} {r}")
 s, r = call("POST", "/rest/v1/rpc/busy", {"p_staff": staff[0]["id"], "p_from": iso(start - dt.timedelta(hours=9)), "p_to": iso(start + dt.timedelta(hours=15))}, token=tok2)
 check("customer 2 sees one busy interval, no names", s == 200 and len(r) == 1 and set(r[0]) == {"starts_at", "ends_at"}, f"{s} {r}")
-row2 = dict(row, customer_name="Altro", starts_at=iso(start + dt.timedelta(minutes=15)), ends_at=iso(end + dt.timedelta(minutes=15)))
+row2 = dict(row, customer_name="Altro")  # same staff, same time
 s, r = call("POST", "/rest/v1/bookings", row2, token=tok2, prefer="return=representation")
 check("overlap refused with 23P01 (HTTP 400)", s == 400 and r.get("code") == "23P01", f"{s} {r}")
+off = dict(row, customer_name="Altro", starts_at=iso(start + dt.timedelta(hours=1, minutes=15)), ends_at=iso(end + dt.timedelta(hours=1, minutes=15)))
+s, r = call("POST", "/rest/v1/bookings", off, token=tok2, prefer="return=representation")
+check("start off the 30-minute grid refused with 23514", s == 400 and r.get("code") == "23514" and "mezz" in r.get("message", ""), f"{s} {r}")
+s, services = call("GET", f"/rest/v1/services?select=id,minutes&shop_id=eq.{shop['id']}", token=tok2)
+check("services on the 30-minute grid", s == 200 and services and all(x["minutes"] % 30 == 0 for x in services), f"{s} {services}")
+s, r = call("POST", "/rest/v1/rpc/free_slots", {"p_staff": staff[0]["id"], "p_service": services[0]["id"], "p_day": day.isoformat()})
+check("free_slots without login, every 30 minutes", s == 200 and r and all(x[14:16] in ("00", "30") for x in r), f"{s} {r}")
 late = dict(row, starts_at=iso(start + dt.timedelta(hours=10)), ends_at=iso(end + dt.timedelta(hours=10)))  # 20:00, closed
 s, r = call("POST", "/rest/v1/bookings", late, token=tok2, prefer="return=representation")
 check("after closing refused with 23514 and an Italian message", s == 400 and r.get("code") == "23514" and r.get("message", "").startswith("Il negozio è chiuso"), f"{s} {r}")

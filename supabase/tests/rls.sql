@@ -28,6 +28,11 @@ do $$ begin
     raise exception 'FAIL: shop code format';
   end if;
   begin
+    insert into public.services (shop_id, name, minutes, price_cents) values ('a1000000-0000-4000-8000-000000000000', 'Barba', 15, 1000);
+    raise exception 'FAIL: 15-minute service accepted';
+  exception when check_violation then null;
+  end;
+  begin
     insert into public.shops (name, week) values ('Second shop', '[null,null,null,null,null,null,null]');
     raise exception 'FAIL: owner created a second shop';
   exception when unique_violation then null;
@@ -112,7 +117,7 @@ do $$ begin
   begin
     insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
       ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Carlo',
-       public.t(7, '18:45'), public.t(7, '19:15'));
+       public.t(7, '19:00'), public.t(7, '19:30'));
     raise exception 'FAIL: booked past closing time';
   exception when check_violation then null;
   end;
@@ -121,6 +126,13 @@ do $$ begin
       ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Carlo',
        public.t(7, '08:30'), public.t(7, '09:00'));
     raise exception 'FAIL: booked before opening time';
+  exception when check_violation then null;
+  end;
+  begin
+    insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
+      ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Carlo',
+       public.t(7, '12:15'), public.t(7, '12:45'));
+    raise exception 'FAIL: booked off the 30-minute grid';
   exception when check_violation then null;
   end;
   begin
@@ -160,7 +172,7 @@ begin
   begin
     insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
       ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Dora',
-       public.t(7, '10:15'), public.t(7, '10:45'));
+       public.t(7, '10:00'), public.t(7, '10:30'));
     raise exception 'FAIL: overlapping booking accepted';
   exception when exclusion_violation then null;
   end;
@@ -235,16 +247,31 @@ do $$ begin
   if exists (select 1 from public.bookings where customer_name = 'Dora') then raise exception 'FAIL: delete_me kept the bookings'; end if;
 end $$;
 
--- Keyless requests (no session) see nothing.
+-- Keyless requests (no session) may browse the catalogue (since 20261118120000) but never see bookings.
 set local role anon;
 do $$ begin
+  if not exists (select 1 from public.shops) then raise exception 'FAIL: anon role cannot browse shops'; end if;
   begin
-    perform 1 from public.shops;
-    raise exception 'FAIL: anon role can read shops';
+    perform 1 from public.bookings;
+    raise exception 'FAIL: anon role can read bookings';
   exception when insufficient_privilege then null;
   end;
 end $$;
 reset role;
+
+do $$ begin
+  if exists (select 1 from public.free_slots('a2000000-0000-4000-8000-000000000000',
+               (select id from public.services where shop_id = 'a1000000-0000-4000-8000-000000000000' limit 1),
+               (now() at time zone 'Europe/Rome')::date + 7) s
+             where extract(minute from s at time zone 'Europe/Rome')::int % 30 <> 0) then
+    raise exception 'FAIL: free_slots off the 30-minute grid';
+  end if;
+  if not exists (select 1 from public.free_slots('a2000000-0000-4000-8000-000000000000',
+               (select id from public.services where shop_id = 'a1000000-0000-4000-8000-000000000000' limit 1),
+               (now() at time zone 'Europe/Rome')::date + 7)) then
+    raise exception 'FAIL: free_slots returned nothing on an open day';
+  end if;
+end $$;
 
 select 'RLS checks passed' as result; -- only reached when every check above passed
 rollback;

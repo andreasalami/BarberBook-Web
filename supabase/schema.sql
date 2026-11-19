@@ -1,6 +1,8 @@
 -- BarberBook database. Run once on a new project: Supabase Dashboard → SQL Editor → paste → Run.
 -- Every shop's data is isolated by Row Level Security (RLS): the server enforces it, not the app.
--- Verify with supabase/tests/rls.sql after running this file.
+-- Then run, in order, the migrations named YYYYMMDDHHMMSS_*.sql in supabase/migrations (the live project has them):
+-- 20261118120000 per-shop time zone, server-side free slots, push queue; 20261119120000 the 30-minute grid.
+-- Verify with supabase/tests/run-local.sh, which applies the same sequence.
 
 create schema if not exists extensions;
 create extension if not exists btree_gist with schema extensions; -- lets the exclusion constraint mix uuid "=" and range "&&"

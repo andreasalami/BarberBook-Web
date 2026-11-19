@@ -16,6 +16,6 @@ insert into public.staff (shop_id, name) values
 
 insert into public.services (shop_id, name, minutes, price_cents) values
   ('e1000000-0000-4000-8000-000000000000', 'Taglio', 30, 1500),
-  ('e1000000-0000-4000-8000-000000000000', 'Barba', 15, 1000);
+  ('e1000000-0000-4000-8000-000000000000', 'Barba', 30, 1000);
 
 select code, name from public.shops where id = 'e1000000-0000-4000-8000-000000000000';
