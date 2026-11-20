@@ -1,7 +1,8 @@
 -- BarberBook database. Run once on a new project: Supabase Dashboard → SQL Editor → paste → Run.
 -- Every shop's data is isolated by Row Level Security (RLS): the server enforces it, not the app.
 -- Then run, in order, the migrations named YYYYMMDDHHMMSS_*.sql in supabase/migrations (the live project has them):
--- 20261118120000 per-shop time zone, server-side free slots, push queue; 20261119120000 the 30-minute grid.
+-- 20261118120000 per-shop time zone, server-side free slots, push queue; 20261119120000 the 30-minute grid;
+-- 20261120120000 one role per account, booking limits, blocked customers, Web Push and the daily summary.
 -- Verify with supabase/tests/run-local.sh, which applies the same sequence.
 
 create schema if not exists extensions;
