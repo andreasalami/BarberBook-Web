@@ -195,6 +195,8 @@ h1, .group > h2, .day-title h3, .big, .primary, .tab, .code-big { font-family: v
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px; width: 100%; text-align: start; padding: 8px 10px;
   border: var(--line) solid var(--ink); border-left: 6px solid var(--cta); background: none;
 }
+/* Red and blue in turn within a day, like the stripes of a barber pole (as in the iPhone agenda). */
+.agenda-slot:nth-of-type(even) { border-left-color: var(--accent-fill); }
 .agenda-slot span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; }
 .agenda-columns { display: none; }
 .agenda-narrow { display: flex; flex-direction: column; gap: 16px; }
