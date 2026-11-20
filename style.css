@@ -271,3 +271,7 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
 
 /* Cloudflare Turnstile, when it needs a tap before a new anonymous account (api.js, captchaToken). */
 .captcha { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1000; }
+
+/* "I tuoi negozi": one card per shop, name and code on the left, Togli on the right. */
+.shop-card { flex-direction: row; align-items: center; }
+.shop-card .row-link { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; border: 0; background: none; color: inherit; text-align: start; padding: 0; }
