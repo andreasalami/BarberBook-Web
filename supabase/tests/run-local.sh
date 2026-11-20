@@ -28,8 +28,9 @@ SQL
 
 grep -v "create extension if not exists pg_cron" "${1:-supabase/schema.sql}" | run
 # Migrations applied after schema.sql, as on the live project. Older ones are already folded into schema.sql.
-for m in 20261118120000_timezone_slots_notifications 20261119120000_30_minute_grid; do
-  run -o /dev/null -f "supabase/migrations/$m.sql"
+# pg_net (the Web Push sender's HTTP calls) exists only on Supabase; the cron stand-in ignores the job text.
+for m in 20261118120000_timezone_slots_notifications 20261119120000_30_minute_grid 20261120120000_roles_limits_push; do
+  grep -v "create extension if not exists pg_net" "supabase/migrations/$m.sql" | run -o /dev/null
 done
 run -o /dev/null -f supabase/tests/rls.sql
 echo "RLS checks passed"

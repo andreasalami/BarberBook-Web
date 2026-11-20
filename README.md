@@ -2,8 +2,9 @@
 
 Copia web, **a costo zero**, dell'app iPhone [BarberBook](../BarberBook/README.md): stesse schermate, stesse regole, stesso backend. Si apre da qualsiasi browser (iPhone, Android, computer) e si può aggiungere alla schermata Home come un'app.
 
-- **Cliente**: inquadra il QR del negozio con la fotocamera del telefono (si apre direttamente la pagina del negozio) oppure scrive il codice di 6 caratteri. Sceglie servizio, operatore e giorno, vede solo gli orari liberi, prenota, aggiunge l'appuntamento al calendario con un promemoria un'ora prima, può disdire. Non serve un account: solo il nome che scrive. Dal menu (icona in alto a destra) può accedere con Google per ritrovare le prenotazioni su un altro dispositivo.
-- **Titolare**: accede con Google, crea il negozio e riceve codice e QR da condividere o stampare. Gestisce l'agenda dei prossimi 5 giorni (su schermo largo una colonna per giorno; su telefono la striscia dei 5 giorni e poi i giorni uno sotto l'altro), gli appuntamenti al banco o al telefono, orari di apertura, operatori e servizi. Può eliminare account e negozio.
+- **Cliente**: inquadra il QR del negozio con la fotocamera del telefono (si apre direttamente la pagina del negozio, che entra nella lista "I tuoi negozi") oppure scrive il codice di 6 caratteri. Con più negozi sceglie dalla lista. Sceglie servizio, operatore e giorno, vede solo gli orari liberi, prenota, aggiunge l'appuntamento al calendario con un promemoria un'ora prima, può disdire. Nessun account e nessun accesso: un identificativo anonimo e il nome che scrive.
+- **Titolare**: accede con Google, crea il negozio e riceve codice e QR da condividere o stampare. Gestisce l'agenda dei prossimi 5 giorni (su schermo largo una colonna per giorno; su telefono la striscia dei 5 giorni e poi i giorni uno sotto l'altro), gli appuntamenti al banco o al telefono, orari di apertura, operatori e servizi. Riceve una notifica a ogni prenotazione e disdetta e, se lo sceglie, un riepilogo giornaliero (la mattina per la giornata o la sera per il giorno dopo, all'ora che vuole). Da un appuntamento può annullare tutte le prenotazioni di quel cliente o bloccarlo. Può eliminare account e negozio.
+- **Un account, un ruolo** (dal 20/11/2026): cliente e titolare sono due account diversi anche sullo stesso browser, ognuno con la sua sessione. Un account titolare non prenota come cliente; "Elimina i miei dati" cancella solo il cliente e le sue prenotazioni, mai un negozio.
 
 ## Costo: zero
 
@@ -39,10 +40,11 @@ Funzioni e dati sono identici: stesse tabelle, stesse regole RLS e trigger lato 
 |---|---|---|
 | `index.html` | Pagina unica, regole di sicurezza (CSP) | — |
 | `app.js` | Stato, operazioni e schermate | `Store.swift`, `BarberBookApp.swift`, `BookingViews.swift`, `OwnerViews.swift` |
-| `api.js` | Client minimo senza SDK: sessione anonima o Google, rinnovo token, chiamate REST | `Supabase.swift` |
-| `logic.js` | Logica pura: orari liberi, prezzi, formati italiani, file calendario | `Scheduling.swift`, `Service.cents` |
+| `api.js` | Client minimo senza SDK: una sessione per ruolo (cliente anonimo, titolare Google), rinnovo token, chiamate REST, CAPTCHA facoltativo | `Supabase.swift` |
+| `sw.js` | Service worker solo per le notifiche del titolare (nessuna cache) | — |
+| `logic.js` | Logica pura: orari liberi, prezzi, formati italiani, file calendario; giorni e orari sempre nell'ora di Roma | `Scheduling.swift`, `Service.cents` |
 | `qr.js` | Generatore di QR (nessuna libreria) | Core Image |
-| `config.js` | URL e chiave pubblica del progetto Supabase | Costanti in `Supabase.swift` |
+| `config.js` | URL e chiave pubblica del progetto Supabase, chiave pubblica VAPID (notifiche), chiave del sito Turnstile (vuota = spento) | Costanti in `Supabase.swift` |
 | `style.css` | Aspetto (colori in variabili, tema chiaro e scuro), layout largo | — |
 | `fonts/oswald-500.woff2`, `fonts/OFL.txt` | Font dei titoli copiato nel sito (la CSP blocca i font esterni) e la sua licenza SIL OFL | — |
 | `manifest.webmanifest`, `icon-512.png`, `apple-touch-icon.png` | Installazione sulla schermata Home, icona del palo da barbiere | `AppIcon` |
@@ -63,14 +65,14 @@ Senza `?demo` la pagina usa il Supabase vero: <http://localhost:8787/?shop=PROVA
 ## Controlli
 
 ```bash
-TZ=Europe/Rome node checks/checks.mjs /tmp/barberbook-qr.txt
+node checks/checks.mjs /tmp/barberbook-qr.txt
 ```
 
 ```bash
 xcrun swift checks/qr-decode.swift /tmp/barberbook-qr.txt
 ```
 
-Il primo verifica orari liberi, prezzi, file calendario e la struttura dei QR; il secondo fa leggere i QR (versioni 1, 4 e 10) al lettore di sistema di macOS e confronta il testo. I test del database sono quelli dell'app: `zsh supabase/tests/run-local.sh`.
+Il primo verifica orari liberi (sempre nell'ora di Roma: prova anche con `TZ=America/New_York` davanti), prezzi, file calendario e la struttura dei QR; il secondo fa leggere i QR (versioni 1, 4 e 10) al lettore di sistema di macOS e confronta il testo. I test del database sono quelli dell'app: `zsh supabase/tests/run-local.sh`.
 
 ## Metterla online (GitHub Pages)
 
@@ -85,10 +87,10 @@ Per usare un progetto Supabase separato (anch'esso gratuito): crealo in UE, eseg
 
 ## Sicurezza
 
-- **Content Security Policy** (`index.html`): la pagina esegue solo i propri file, nessuno script inline o esterno, e parla solo con Supabase. Riduce il danno di un eventuale XSS, che è il rischio principale di tenere i token nel `localStorage`.
+- **Content Security Policy** (`index.html`): la pagina esegue solo i propri file, nessuno script inline, e parla solo con Supabase. Unica eccezione: `challenges.cloudflare.com`, caricato solo se il CAPTCHA Turnstile è acceso in `config.js`. Riduce il danno di un eventuale XSS, che è il rischio principale di tenere i token nel `localStorage`.
 - Tutto il testo arriva nella pagina come testo (`textContent`), mai come HTML: un nome cliente come `<script>` resta una scritta.
 - Nessuna libreria di terze parti, nessun CDN, nessun analytics: il browser contatta solo GitHub Pages (le pagine) e Supabase (i dati); Google solo per chi sceglie di accedere.
-- Le regole che contano sono sul server e sono le stesse dell'app: isolamento tra negozi (RLS), niente doppie prenotazioni (vincolo di esclusione), servizio e orari validi, massimo 4 prenotazioni future per cliente e negozio.
+- Le regole che contano sono sul server e sono le stesse dell'app: isolamento tra negozi (RLS), niente doppie prenotazioni (vincolo di esclusione), servizio e orari validi, un ruolo per account, e per ogni cliente in un negozio al massimo 4 prenotazioni future, 2 al giorno, 6 nuove all'ora (disdette comprese), nessuna se bloccato dal negozio.
 
 ## Privacy
 
@@ -96,8 +98,9 @@ Stessi dati e stesse regole dell'app iPhone (tabella completa nel [README dell'a
 
 | Dato | Dove | Conservazione | Cancellazione |
 |---|---|---|---|
-| Sessione (token di accesso e rinnovo, id utente, se anonimo) | `localStorage` di questo browser | Finché non si esce o si eliminano i dati | "Esci dall'account", "Elimina i miei dati", o cancellando i dati del sito nel browser |
-| Ruolo, codice del negozio, ultimo nome usato | `localStorage` di questo browser | Come sopra | "Elimina i miei dati" o dati del sito |
+| Sessioni, una per ruolo (token di accesso e rinnovo, id utente, se anonimo) | `localStorage` di questo browser | Finché non si esce o si eliminano i dati | "Esci dall'account" (titolare), "Elimina i miei dati", o cancellando i dati del sito nel browser |
+| Ruolo, lista dei negozi aperti, negozio scelto, ultimo nome usato | `localStorage` di questo browser | Come sopra | "Elimina i miei dati", "Togli" nella lista, o dati del sito |
+| Titolare con le notifiche attive: indirizzo di consegna del browser (endpoint e chiavi di cifratura) | Supabase (tabella `devices`) e servizio push del browser (Apple, Google o Mozilla), che vede solo messaggi cifrati | Finché le notifiche restano attive | "Disattiva su questo dispositivo", "Esci dall'account", eliminazione dell'account |
 | Verifica PKCE durante l'accesso Google | `sessionStorage` della scheda | Fino al ritorno da Google | Automatica |
 | Indirizzo IP e richieste delle pagine | GitHub (hosting) | Secondo le regole di GitHub | — |
 
@@ -107,15 +110,22 @@ L'informativa per clienti e titolari è la pagina [`privacy.html`](privacy.html)
 
 ## Limiti noti
 
-Oltre a quelli dell'app iPhone (orari mostrati nell'ora del telefono: il server dal 18/11/2026 usa il fuso di ogni negozio, predefinito Roma; un negozio per titolare, una fascia oraria al giorno, nessuna notifica al titolare, limite di 4 prenotazioni aggirabile ricreando utenti anonimi):
+Oltre a quelli dell'app iPhone (un negozio per titolare, una fascia oraria al giorno, limiti per cliente aggirabili ricreando utenti anonimi finché il CAPTCHA è spento). Orari: dal 20/11/2026 il sito mostra e calcola tutto nell'ora di Roma, come il server, qualunque sia il fuso del dispositivo.
 
 - **Piano gratuito di Supabase**: il progetto va in pausa dopo 7 giorni senza traffico (si riattiva dalla dashboard) e non ha backup. È il prezzo del costo zero.
-- **Abuso dell'accesso anonimo**: sul web è più facile creare utenti anonimi in serie. Contromisura gratuita da valutare: CAPTCHA Cloudflare Turnstile sull'accesso anonimo (Supabase → Authentication → Attack Protection), richiede un account Cloudflare gratuito.
+- **Abuso dell'accesso anonimo**: sul web è facile creare utenti anonimi in serie. Il codice per il CAPTCHA Cloudflare Turnstile è pronto ma spento: vedi "Da attivare" qui sotto.
+- **Notifiche su iPhone**: arrivano solo se il titolare aggiunge il sito alla schermata Home e lo apre da lì (iOS 16.4 o successivo); in una scheda di Safari no. Su Android e computer funzionano anche nel browser.
 - **Promemoria**: il file `.ics` va aggiunto al calendario a mano; se poi si disdice, l'evento resta nel calendario e va tolto a mano.
 - **Accesso con Google dall'icona sulla schermata Home (iPhone)**: iOS può completare l'accesso in Safari invece che nell'icona, e l'accesso non si chiude. In quel caso si accede dalla pagina in Safari. La prenotazione da cliente non ne risente.
-- **Cliente senza account**: le prenotazioni sono legate a questo browser. Cambiando browser o cancellando i dati del sito non le vede più (restano valide in negozio). Con Google le ritrova.
-- Il client OAuth Google è in produzione dal 19/11/2026 (home page e `privacy.html` nel Branding, nessun logo, quindi nessuna verifica Google). Il pulsante è testuale: prima di una diffusione ampia va portato allo stile ufficiale Google.
+- **Cliente**: le prenotazioni sono legate a questo browser. Cambiando browser o cancellando i dati del sito non le vede più (restano valide in negozio).
+- Il client OAuth Google è in produzione dal 19/11/2026 (home page e `privacy.html` nel Branding, nessun logo, quindi nessuna verifica Google). Il pulsante segue le linee guida di Google (logo "G" originale, temi chiaro e scuro); il carattere Roboto c'è solo dove il dispositivo lo ha già (Android), altrove si usa quello di sistema per non scaricare font da Google.
 - Agenda aggiornata ogni 2 minuti mentre è aperta, e quando si torna sulla pagina.
+
+## Da attivare (passi di Andrea)
+
+1. **Chiavi delle notifiche** (Supabase → Edge Functions → Secrets → Add): `VAPID_PUBLIC_KEY` = il valore in `config.js`; `VAPID_PRIVATE_KEY` = il contenuto del file generato il 20/11/2026 (indicato nella sessione di Claude, poi da cancellare); `VAPID_SUBJECT` = `mailto:` seguito dall'indirizzo di contatto dell'informativa. Senza, la funzione `send-push` si ferma e le notifiche restano in coda.
+2. **CAPTCHA (facoltativo)**: account Cloudflare gratuito → Turnstile → nuovo widget per `andreasalami.github.io` → la *site key* va in `TURNSTILE_SITE_KEY` di `config.js`, la *secret key* in Supabase → Authentication → Attack Protection → CAPTCHA (Turnstile). Prima va aggiunta Cloudflare a `privacy.html`. Attenzione: l'app iPhone non manda il CAPTCHA e i suoi clienti non potrebbero più prenotare.
+3. **Consigliato**: Supabase → Authentication → Sign In / Providers → *Allow manual linking* **spento**. Il sito e l'app non collegano più account; spento, nessuno può farlo a mano.
 
 ## Verifica eseguita (18/11/2026)
 

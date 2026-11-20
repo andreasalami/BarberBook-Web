@@ -1,9 +1,11 @@
 // BarberBook on the web: same screens and rules as the iPhone app (BarberBook/*.swift), same Supabase backend.
-// The user picks a role on first visit. Customers open a shop by code or QR link (remembered as their default);
-// owners sign in with Google and create or manage their own shop. The server enforces who may do what (RLS).
+// The user picks a role on first visit. Customers open shops by code or QR link (kept in a list in this browser) and
+// book with an anonymous account; owners sign in with Google and manage their own shop. The two roles are two
+// different accounts, never one acting as the other. The server enforces who may do what (RLS).
 import * as api from './api.js'
-import { addDays, cents, dayValue, defaultWeek, freeStarts, fullDate, hhmm, ics, longDay, parseDay, priceText as formatPrice,
-  sameDay, shortDate, startOfDay, STEP, time, isOutside } from './logic.js'
+import { VAPID_PUBLIC_KEY } from './config.js'
+import { addDays, cents, dayText, dayValue, defaultWeek, freeStarts, fullDate, hhmm, ics, longDay, parseDay, priceText as formatPrice,
+  rome, romeDate, sameDay, shortDate, startOfDay, STEP, time, isOutside } from './logic.js'
 import { qrDataURL } from './qr.js'
 
 // MARK: Storage (UserDefaults on the iPhone)
@@ -14,6 +16,7 @@ const pref = (key, persistent = true) => ({
   set: v => { try { v == null ? area(persistent)?.removeItem(key) : area(persistent)?.setItem(key, v) } catch {} },
 })
 const ROLE = pref('barberbook.role'), SHOP_CODE = pref('barberbook.shopCode'), NAME = pref('barberbook.customerName')
+const SHOPS = pref('barberbook.shops')
 /** Set when the user switches from customer to owner in this tab: the owner area shows customers' names, so it asks
  *  for Google again even if a session exists. A fresh visit as owner does not ask. */
 const OWNER_SIGN_IN = pref('barberbook.ownerSignIn', false)
@@ -46,19 +49,22 @@ const S = {
   role: ROLE.get() ?? '',
   /** Customer: the shop opened by code. Owner: their own shop (null until created). */
   shop: null, staff: [], services: [],
-  /** Signed in with Google. Anonymous sessions can book but never own a shop. */
+  /** Owner: signed in with Google. Customers are always anonymous. */
   signedIn: false,
   ownerSignInRequired: OWNER_SIGN_IN.get() === '1',
   tab: { customer: 'book', owner: 'agenda' },
   form: null, mine: [], newStaff: '',
   agenda: { start: startOfDay(new Date()), bookings: [] },
+  /** Owner: customers blocked from the shop; Web Push state of this browser (see refreshPushState). */
+  blocked: [], push: '',
 }
+api.useRole(S.role)
 
 const SLOT_TAKEN = 'Questo orario è appena stato preso. Scegline un altro.'
 const SPAN = 5
 
 function setOwnerSignInRequired(value) { S.ownerSignInRequired = value; OWNER_SIGN_IN.set(value ? '1' : null) }
-function setRole(role) { S.role = role; ROLE.set(role || null); load() }
+function setRole(role) { S.role = role; ROLE.set(role || null); api.useRole(role); load() }
 
 /** Goes straight to the other role; the "Sono un cliente / Sono il titolare" screen is only for the first visit. */
 function switchRole() {
@@ -91,8 +97,10 @@ async function load() {
     S.shop = shop
     if (role === 'customer' && code && !shop) {
       SHOP_CODE.set(null)
+      forgetShop(code)
       showAlert('Attenzione', `Nessun negozio trovato con il codice ${code}.`)
     }
+    if (role === 'customer' && shop) rememberShop(shop)
     if (shop) await reloadCatalog()
     if (id !== loadID) return
     S.phase = 'ready'
@@ -115,14 +123,15 @@ async function reloadCatalog() {
 
 /** The shop's hours, staff and services again: the owner may have changed them since the page opened,
  *  and the server refuses bookings that no longer match them. */
-async function refreshShop() {
+async function refreshShop(quiet = false) {
   const code = S.shop?.code
   if (demo || !code) return
-  await run(async () => {
+  const work = async () => {
     const fresh = (await api.select('shops', [['code', `eq.${code}`]]))[0]
     if (fresh) S.shop = fresh
     await reloadCatalog()
-  })
+  }
+  if (quiet) { try { await work() } catch {} } else await run(work)
 }
 
 const staffName = id => S.staff.find(s => s.id === id)?.name ?? '—'
@@ -136,6 +145,19 @@ function bookingPrice(b) {
 }
 
 // MARK: Customer: pick a shop
+
+/** The customer's shops (code and name) in this browser: every QR scanned or code typed adds one. */
+function favorites() {
+  try { const list = JSON.parse(SHOPS.get()); return Array.isArray(list) ? list.filter(x => typeof x?.code === 'string') : [] }
+  catch { return [] }
+}
+function rememberShop(shop) {
+  const list = favorites(), known = list.find(x => x.code === shop.code)
+  if (known) known.name = shop.name
+  else list.push({ code: shop.code, name: shop.name })
+  SHOPS.set(JSON.stringify(list.slice(-30)))
+}
+function forgetShop(code) { SHOPS.set(JSON.stringify(favorites().filter(x => x.code !== code))) }
 
 /** Codes are 6 letters/digits; anything else is ignored. */
 const normalizeCode = raw => { const code = raw.trim().toUpperCase(); return /^[A-Z0-9]{4,12}$/.test(code) ? code : null }
@@ -158,20 +180,21 @@ const shopLink = code => `${location.origin}${location.pathname}?shop=${code}${d
 
 // MARK: Account (owners and customers)
 
-/** Leaves the page for Google; boot() completes the sign-in on return. The demo never touches the real server:
- *  on a public site it would leave anonymous users behind (the iPhone demo is only on developers' phones). */
+/** Owners only. Leaves the page for Google; boot() completes the sign-in on return. The demo never touches the real
+ *  server: on a public site it would leave users behind (the iPhone demo is only on developers' phones). */
 const signInWithGoogle = () => demo
   ? showAlert('Demo', "Nella demo l'accesso con Google non è disponibile. Apri il sito senza ?demo per usarlo davvero.")
   : run(() => api.startGoogle())
 
-/** The next server call starts a fresh anonymous session. A customer keeps the shop code in this browser. */
-function signOut() { api.signOut(); load() }
+/** Owner: this browser stops receiving the shop's notifications, then forgets the session. */
+async function signOut() { if (!demo) await disablePush(true); api.signOut(); load() }
 
-/** Owner or customer. Deletes the server account and everything it owns, then the local copies. */
-async function deleteAccount() {
-  if (!demo && !(await run(() => api.deleteAccount()))) return false
-  SHOP_CODE.set(null)
-  NAME.set(null)
+/** Deletes the account of the current role. Customer: the account, its bookings and this browser's list of shops;
+ *  never a shop or other people's bookings. Owner: also the shop (asked explicitly, see api.deleteAccount). */
+async function deleteAccount(isOwner) {
+  if (isOwner && !demo) await disablePush(true)
+  if (!demo && !(await run(() => api.deleteAccount(isOwner)))) return false
+  if (!isOwner) { SHOP_CODE.set(null); NAME.set(null); SHOPS.set(null) }
   leaveShop()
   return true
 }
@@ -237,11 +260,13 @@ const toBooking = b => ({ ...b, starts_at: new Date(b.starts_at), ends_at: new D
 
 /** Busy intervals of one staff member on `day`, without names (database function `busy`).
  *  null on failure: the form must not show every time as free. */
-async function busy(staffID, day) {
+async function busy(staffID, day, quiet = false) {
   const from = startOfDay(day), to = addDays(from, 1)
   if (demo) return D.bookings.filter(b => b.staff_id === staffID && b.starts_at < to && b.ends_at > from)
     .map(b => ({ start: b.starts_at, end: b.ends_at }))
-  const rows = await attempt(() => api.rpc('busy', { p_staff: staffID, p_from: from.toISOString(), p_to: to.toISOString() }))
+  const work = () => api.rpc('busy', { p_staff: staffID, p_from: from.toISOString(), p_to: to.toISOString() })
+  let rows = null
+  if (quiet) { try { rows = await work() } catch {} } else rows = await attempt(work)
   return rows?.map(r => ({ start: new Date(r.starts_at), end: new Date(r.ends_at) })) ?? null
 }
 
@@ -256,7 +281,7 @@ async function book(service, staffID, start, customerName, isOwner) {
       showAlert('Attenzione', SLOT_TAKEN)
       return null
     }
-    D.bookings.push({ ...booking, staff: { name: staffName(staffID) }, shops: { name: S.shop.name } })
+    D.bookings.push({ ...booking, customer_id: isOwner ? null : 'demo-me', staff: { name: staffName(staffID) }, shops: { name: S.shop.name } })
     if (isOwner) D.ownerBookings.add(booking.id) // the owner's: no customer account, as on the server
     return booking
   }
@@ -462,6 +487,8 @@ function enterTab() {
   if (S.role === 'customer' && tab === 'mine') reloadMine()
   if (S.role === 'customer' && tab === 'book') { S.form ??= newForm(false); loadSlots(S.form, render) }
   if (agendaVisible()) reloadAgenda()
+  if (S.role === 'owner' && S.signedIn && !S.ownerSignInRequired) // blocked list for the agenda's detail, push state for settings
+    Promise.all([loadBlocked(true), refreshPushState()]).then(render)
 }
 
 /** First screen: the user says whether they are a customer or the owner. Stored in this browser. */
@@ -478,13 +505,20 @@ function roleChoiceView() {
     h('p', { class: 'footnote secondary' }, 'Puoi cambiare profilo in qualsiasi momento.'))
 }
 
-/** Customer: open a shop by its code. The QR code in the shop opens the site already on the shop. */
+/** Customer: the shops already opened in this browser, and a code field to add one. The QR code in the shop opens
+ *  the site already on the shop and adds it to the list. */
 function shopPickerView() {
   let code = ''
+  const list = favorites()
   const open = h('button', { type: 'submit', class: 'primary', disabled: true }, 'Apri il negozio')
-  return page(header('Il tuo negozio', accountButton()),
+  return page(header(list.length ? 'I tuoi negozi' : 'Il tuo negozio', accountButton()),
+    list.length > 0 && section(null, h('div', { class: 'card rows' }, list.map(x => h('div', { class: 'row' },
+      h('button', { type: 'button', class: 'row-link grow', onclick: () => openShop(x.code) },
+        h('span', {}, x.name), h('span', { class: 'secondary mono' }, x.code)),
+      h('button', { type: 'button', class: 'link danger', 'aria-label': `Togli ${x.name} dalla lista`,
+        onclick: () => { forgetShop(x.code); render() } }, 'Togli'))))),
     h('form', { onsubmit: e => { e.preventDefault(); if (code.trim().length >= 4) openShop(code) } },
-      section(null, h('div', { class: 'card' }, h('input', { class: 'code-input', placeholder: 'Codice del negozio',
+      section(list.length ? 'Aggiungi un negozio' : null, h('div', { class: 'card' }, h('input', { class: 'code-input', placeholder: 'Codice del negozio',
         'aria-label': 'Codice del negozio', autocapitalize: 'characters', autocomplete: 'off', autocorrect: 'off', spellcheck: false,
         maxlength: '12', oninput: e => { code = e.target.value; open.disabled = code.trim().length < 4 } })),
       h('p', { class: 'footer' }, demo ? 'Demo: usa il codice BARBA2.'
@@ -492,9 +526,26 @@ function shopPickerView() {
       open))
 }
 
-/** Google. Supabase receives the account's email and name; the shops never see them. */
+/** Google's "G", unchanged as its branding guidelines require. */
+function googleLogo() {
+  const NS = 'http://www.w3.org/2000/svg', svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 48 48'); svg.setAttribute('aria-hidden', 'true')
+  for (const [fill, d] of [
+    ['#EA4335', 'M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z'],
+    ['#4285F4', 'M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z'],
+    ['#FBBC05', 'M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z'],
+    ['#34A853', 'M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z'],
+  ]) {
+    const path = document.createElementNS(NS, 'path')
+    path.setAttribute('fill', fill); path.setAttribute('d', d)
+    svg.append(path)
+  }
+  return svg
+}
+
+/** Owners only. Supabase receives the account's email and name; the shops' customers never see them. */
 const signInButtons = () => h('div', { class: 'stack' },
-  textButton('Continua con Google', signInWithGoogle, 'secondary-button'),
+  h('button', { type: 'button', class: 'gsi-button', onclick: signInWithGoogle }, googleLogo(), h('span', {}, 'Continua con Google')),
   h('p', { class: 'footnote secondary' }, 'Con Google il server riceve email e nome del tuo account Google.'))
 
 /** Owner: Google. The account only links the owner to their shop. */
@@ -504,13 +555,6 @@ function ownerSignInView() {
       h('p', { class: 'secondary' }, 'Accedi per creare o gestire il tuo negozio.'),
       signInButtons(),
       demo && textButton('Entra nella demo', () => { setOwnerSignInRequired(false); render(); enterTab() }, 'secondary-button')))
-}
-
-/** Customer, optional: an account only lets them find their bookings again on another phone or computer. */
-function customerSignIn() {
-  openSheet(() => sheetPage('Accedi', closeButton(), h('div', { class: 'hero inset' }, icon('person'),
-    h('p', { class: 'secondary' }, 'Non serve per prenotare. Con un account ritrovi le tue prenotazioni anche su un altro telefono o computer; quelle già fatte restano tue.'),
-    signInButtons(), textButton('Non ora', closeSheet))))
 }
 
 function setupView() {
@@ -535,19 +579,14 @@ function setupView() {
 }
 
 /** Account menu items for the current screen. Everyday actions first, account next, the destructive one last.
- *  Owners have no "Cambia negozio": an account owns exactly one shop. */
+ *  Customers have no sign-in: they are anonymous. Owners have no "Cambia negozio": an account owns exactly one shop. */
 function accountItems() {
-  const isOwner = S.role === 'owner'
   const swap = { label: switchRoleLabel(), glyph: 'swap', run: switchRole }
-  if (isOwner ? !S.signedIn || S.ownerSignInRequired : !S.shop) return [swap] // owner sign-in, customer shop picker
-  if (isOwner && !S.shop) return [swap, { label: 'Esci', glyph: 'logout', run: signOut }, // new shop
-    { label: 'Elimina account', glyph: 'trash', danger: true, run: () => removeAccount(true) }]
-  return [
-    !isOwner && { label: 'Cambia negozio', glyph: 'store', run: leaveShop },
-    swap,
-    S.signedIn ? { label: "Esci dall'account", glyph: 'logout', run: signOut } : { label: 'Accedi con Google', glyph: 'login', run: customerSignIn },
-    { label: isOwner ? 'Elimina account e negozio' : 'Elimina i miei dati', glyph: 'trash', danger: true, run: () => removeAccount(isOwner) },
-  ].filter(Boolean)
+  if (S.role !== 'owner') return S.shop ? [{ label: 'Cambia negozio', glyph: 'store', run: leaveShop }, swap,
+    { label: 'Elimina i miei dati', glyph: 'trash', danger: true, run: () => removeAccount(false) }] : [swap]
+  if (!S.signedIn || S.ownerSignInRequired) return [swap] // owner sign-in
+  return [swap, { label: "Esci dall'account", glyph: 'logout', run: signOut },
+    { label: S.shop ? 'Elimina account e negozio' : 'Elimina account', glyph: 'trash', danger: true, run: () => removeAccount(true) }]
 }
 
 async function removeAccount(isOwner) {
@@ -555,8 +594,8 @@ async function removeAccount(isOwner) {
   if (await confirmBox(ownsShop ? 'Eliminare account e negozio?' : isOwner ? "Eliminare l'account?" : 'Eliminare i tuoi dati?',
     ownsShop ? 'Vengono cancellati il negozio, operatori, servizi e tutte le prenotazioni dei clienti. Non si può annullare.'
       : isOwner ? 'Il tuo account viene cancellato. Non si può annullare.'
-      : 'Le tue prenotazioni vengono cancellate e i negozi non vedranno più il tuo nome. Non si può annullare.',
-    ownsShop ? 'Elimina tutto' : 'Elimina') && await deleteAccount()) setRole('')
+      : 'Vengono cancellate le tue prenotazioni e i negozi salvati in questo browser. I negozi e le prenotazioni degli altri non vengono toccati. Non si può annullare.',
+    ownsShop ? 'Elimina tutto' : 'Elimina') && await deleteAccount(isOwner)) setRole('')
 }
 
 /** Theme choice inside the menu: applies at once and keeps the menu open. */
@@ -594,7 +633,7 @@ function accountButton() {
 const newForm = isOwner => ({ isOwner, serviceID: S.services[0]?.id, staffID: S.staff[0]?.id, day: startOfDay(new Date()),
   slots: [], slot: null, name: isOwner ? '' : NAME.get() ?? '', saving: false, request: 0 })
 
-function bookView() { return page(header('Prenota', accountButton()), bookingForm(S.form ??= newForm(false), render)) }
+function bookView() { return page(header(S.shop.name, accountButton()), bookingForm(S.form ??= newForm(false), render)) }
 
 function bookingForm(f, rerender) {
   if (!S.services.length || !S.staff.length) return section(null, h('div', { class: 'card' }, 'Il negozio non ha ancora pubblicato servizi e operatori. Riprova più tardi.'))
@@ -626,12 +665,13 @@ function bookingForm(f, rerender) {
     f.slot && h('div', { class: 'bookbar' }, book))
 }
 
-async function loadSlots(f, rerender) {
+/** `quiet`: background refresh (back to the page), no alert: a network not yet awake would raise a false one. */
+async function loadSlots(f, rerender, quiet = false) {
   const service = S.services.find(s => s.id === f.serviceID), request = ++f.request
   if (!service || !f.staffID || !S.shop) { f.slots = []; f.slot = null; rerender(); return }
   const today = startOfDay(new Date())
   if (f.day < today) f.day = today // page left open past midnight
-  const intervals = await busy(f.staffID, f.day)
+  const intervals = await busy(f.staffID, f.day, quiet)
   if (request !== f.request) return // a newer choice replaced this one
   f.slots = intervals ? freeStarts(f.day, S.shop.week, service.minutes, intervals, new Date()) : []
   if (f.slot && !f.slots.some(s => s.getTime() === f.slot.getTime())) f.slot = null // a refresh keeps a time still free
@@ -639,11 +679,11 @@ async function loadSlots(f, rerender) {
 }
 
 /** Hours, staff and services from the server, then the free times. Keeps the choices that still exist. */
-async function refreshForm(f, rerender) {
-  await refreshShop()
+async function refreshForm(f, rerender, quiet = false) {
+  await refreshShop(quiet)
   if (!S.services.some(s => s.id === f.serviceID)) f.serviceID = S.services[0]?.id
   if (!S.staff.some(s => s.id === f.staffID)) f.staffID = S.staff[0]?.id
-  await loadSlots(f, rerender)
+  await loadSlots(f, rerender, quiet)
 }
 
 async function confirmBooking(f, rerender) {
@@ -654,7 +694,7 @@ async function confirmBooking(f, rerender) {
   const customer = f.name.trim()
   const booking = await book(service, f.staffID, f.slot, customer, f.isOwner)
   f.saving = false
-  if (!booking) return refreshForm(f, rerender) // refused (slot taken, service or hours changed): show what is bookable now
+  if (!booking) return refreshForm(f, rerender, true) // refused (slot taken, hours changed…): the alert says why; show what is bookable now
   if (!f.isOwner) NAME.set(customer)
   loadSlots(f, rerender)
   // Customers get no other reminder (no push, no email): without the calendar event the booking is easy to forget.
@@ -667,13 +707,15 @@ async function confirmBooking(f, rerender) {
 
 // MARK: Booking cards
 
-/** A booking at a glance: day, time, name, service and price. Actions from ⋯. */
-function bookingCard(b, { showShop, cancelTitle, onCancel, calendar = false }) {
+/** A booking at a glance: day, time, name, service and price. Actions from ⋯; `extra`: more destructive ones {label, run}. */
+function bookingCard(b, { showShop, cancelTitle, onCancel, calendar = false, extra = [] }) {
   const price = bookingPrice(b)
   const actions = async () => {
     const choice = await showAlert(null, null, [calendar && { label: 'Aggiungi al calendario', action: () => addToCalendar(b) },
-      { label: cancelTitle, value: 'cancel', destructive: true }, { label: 'Chiudi', cancel: true }])
+      { label: cancelTitle, value: 'cancel', destructive: true },
+      ...extra.filter(Boolean).map(x => ({ label: x.label, value: x, destructive: true })), { label: 'Chiudi', cancel: true }])
     if (choice === 'cancel') onCancel(b)
+    else choice?.run?.()
   }
   return h('article', { class: 'card booking-card' },
     h('div', { class: 'split' }, h('span', { class: 'accent strong' }, longDay(b.starts_at)),
@@ -713,7 +755,7 @@ function agendaView() {
     const count = on(day).length
     return h('div', { class: 'day-title' },
       h('h3', { class: sameDay(day, today) ? 'accent' : null },
-        compact ? day.toLocaleDateString('it-IT', { weekday: 'long', day: 'numeric' }) : longDay(day)),
+        compact ? dayText(day, { weekday: 'long', day: 'numeric' }) : longDay(day)),
       h('span', { class: 'caption secondary' }, count === 0 ? 'Nessun appuntamento' : plural(count)))
   }
   const slots = day => {
@@ -730,7 +772,7 @@ function agendaView() {
     h('div', { class: 'card period' },
       h('button', { type: 'button', class: 'icon-button', 'aria-label': 'Giorni precedenti', onclick: () => moveAgenda(addDays(start, -SPAN)) }, icon('left')),
       h('input', { type: 'date', 'aria-label': 'Dal', value: dayValue(start), onchange: e => e.target.value && moveAgenda(parseDay(e.target.value)) }),
-      h('span', { class: 'secondary' }, `– ${days.at(-1).toLocaleDateString('it-IT', { day: 'numeric', month: 'short' })}`),
+      h('span', { class: 'secondary' }, `– ${dayText(days.at(-1), { day: 'numeric', month: 'short' })}`),
       h('button', { type: 'button', class: 'icon-button', 'aria-label': 'Giorni successivi', onclick: () => moveAgenda(addDays(start, SPAN)) }, icon('right')),
       h('span', { class: 'spacer' }),
       !sameDay(start, today) && textButton('Oggi', () => moveAgenda(startOfDay(new Date())))),
@@ -741,8 +783,8 @@ function agendaView() {
         return h('button', { type: 'button', class: sameDay(day, today) ? 'overview-day today' : 'overview-day',
           'aria-label': `${longDay(day)}, ${plural(count)}`,
           onclick: () => document.getElementById(`day-${dayValue(day)}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) },
-          h('span', { class: 'caption upper' }, day.toLocaleDateString('it-IT', { weekday: 'short' })),
-          h('span', { class: 'num' }, day.getDate()),
+          h('span', { class: 'caption upper' }, dayText(day, { weekday: 'short' })),
+          h('span', { class: 'num' }, rome(day).day),
           h('span', { class: count ? 'caption strong accent' : 'caption secondary' }, count || '–'))
       })),
       days.map(day => h('section', { class: 'card day', id: `day-${dayValue(day)}` }, title(day, false), slots(day)))))
@@ -765,13 +807,126 @@ function newAppointment() {
   loadSlots(f, renderSheet)
 }
 
-/** One appointment in full (customer, service, price, staff), with cancel. */
+/** One appointment in full (customer, service, price, staff), with cancel. A customer's booking (not a walk-in) also
+ *  offers to cancel all their upcoming bookings and to block them: the remedy for someone filling the agenda. */
 function openDetail(b) {
+  const customer = b.customer_id && !S.blocked.some(x => x.customer_id === b.customer_id)
   openSheet(() => sheetPage('Appuntamento', closeButton(), bookingCard(b, { showShop: false, cancelTitle: 'Annulla appuntamento',
+    extra: b.customer_id && [{ label: `Annulla tutte le prenotazioni di ${b.customer_name}`, run: () => cancelAllOf(b) },
+      customer && { label: `Blocca ${b.customer_name}`, run: () => blockCustomer(b) }],
     onCancel: async () => {
       if (await confirmBox("Annullare l'appuntamento?", `${b.customer_name}, ${shortDate(b.starts_at)}`, 'Annulla appuntamento')
         && await cancel(b)) { closeSheet(); reloadAgenda() }
     } })))
+}
+
+async function cancelAllOf(b) {
+  if (!await confirmBox(`Annullare le prenotazioni di ${b.customer_name}?`,
+    'Vengono annullate tutte le sue prenotazioni future nel tuo negozio. Non si può annullare.', 'Annulla tutte')) return
+  const now = new Date()
+  const ok = demo ? (D.bookings = D.bookings.filter(x => !(x.customer_id === b.customer_id && x.ends_at > now)), true)
+    : await run(() => api.removeWhere('bookings', [['shop_id', `eq.${S.shop.id}`], ['customer_id', `eq.${b.customer_id}`],
+      ['ends_at', `gt.${now.toISOString()}`]]))
+  if (ok) { closeSheet(); reloadAgenda() }
+}
+
+async function blockCustomer(b) {
+  if (!await confirmBox(`Bloccare ${b.customer_name}?`, "Da quel telefono o browser non potrà più prenotare nel tuo negozio. "
+    + "Le prenotazioni già fatte restano: puoi annullarle dall'agenda. Lo sblocchi da Negozio → Clienti bloccati.", 'Blocca')) return
+  const row = { shop_id: S.shop.id, customer_id: b.customer_id, customer_name: b.customer_name }
+  const ok = demo ? (D.blocked.push({ ...row, created_at: new Date().toISOString() }), true)
+    : await run(() => api.insert('blocked_customers', row))
+  if (ok) { await loadBlocked(); closeSheet(); render() }
+}
+
+async function loadBlocked(quiet = false) {
+  if (!S.shop) return
+  if (demo) { S.blocked = [...D.blocked]; return }
+  const work = () => api.select('blocked_customers', [['shop_id', `eq.${S.shop.id}`], ['order', 'created_at']])
+  let rows = null
+  if (quiet) { try { rows = await work() } catch {} } else rows = await attempt(work)
+  if (rows) S.blocked = rows
+}
+
+async function unblock(row) {
+  if (demo) D.blocked = D.blocked.filter(x => x.customer_id !== row.customer_id)
+  else if (!await run(() => api.removeWhere('blocked_customers', [['shop_id', `eq.${row.shop_id}`], ['customer_id', `eq.${row.customer_id}`]]))) return
+  await loadBlocked()
+  render()
+}
+
+// MARK: Owner notifications (Web Push from the send-push Edge Function, see sw.js)
+
+const pushSupported = () => 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window
+/** iPhone and iPad get Web Push only in the site opened from its Home Screen icon (iOS 16.4+), not in a Safari tab. */
+const needsHomeScreen = () => /iPhone|iPad|iPod/.test(navigator.userAgent) && !navigator.standalone
+const base64Bytes = b64 => Uint8Array.from(atob(b64.replace(/-/g, '+').replace(/_/g, '/') + '='.repeat((4 - b64.length % 4) % 4)), c => c.charCodeAt(0))
+
+async function pushSubscription() {
+  if (!pushSupported()) return null
+  const registration = await navigator.serviceWorker.getRegistration()
+  return registration ? registration.pushManager.getSubscription() : null
+}
+
+async function refreshPushState() {
+  S.push = demo ? 'demo' : !VAPID_PUBLIC_KEY ? 'unconfigured' : needsHomeScreen() ? 'homescreen' : !pushSupported() ? 'unsupported'
+    : Notification.permission === 'denied' ? 'denied' : await pushSubscription().catch(() => null) ? 'on' : 'off'
+}
+
+async function enablePush() {
+  if (await Notification.requestPermission() === 'granted') await run(async () => {
+    const registration = await navigator.serviceWorker.register('sw.js')
+    await navigator.serviceWorker.ready
+    const subscription = await registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: base64Bytes(VAPID_PUBLIC_KEY) })
+    await api.rpc('register_device', { p_token: JSON.stringify(subscription), p_platform: 'web' })
+  })
+  await refreshPushState()
+  render()
+}
+
+/** `quiet`: on sign-out and account deletion, best effort. */
+async function disablePush(quiet = false) {
+  const subscription = await pushSubscription().catch(() => null)
+  if (!subscription) return
+  const work = async () => { await api.rpc('unregister_device', { p_token: JSON.stringify(subscription) }); await subscription.unsubscribe() }
+  if (quiet) { try { await work() } catch {} } else await run(work)
+  await refreshPushState()
+  render()
+}
+
+const PUSH_TEXT = {
+  demo: 'Nella demo le notifiche non sono disponibili.',
+  unconfigured: 'Le notifiche non sono ancora attive sul server.',
+  homescreen: "Su iPhone le notifiche arrivano solo dall'icona: tocca Condividi → Aggiungi alla schermata Home, apri BarberBook da lì e attivale qui.",
+  unsupported: 'Questo browser non supporta le notifiche.',
+  denied: 'Le notifiche sono bloccate per questo sito: riattivale nelle impostazioni del browser.',
+  off: 'Ricevi un avviso a ogni nuova prenotazione e a ogni disdetta.',
+  on: 'Attive su questo dispositivo: un avviso a ogni nuova prenotazione e a ogni disdetta.',
+}
+
+const SUMMARY = [['', 'Nessun riepilogo'], ['today', 'La mattina, per la giornata'], ['tomorrow', 'La sera, per il giorno dopo']]
+/** Default times when the summary is switched on: 08:00 for the morning one, 20:00 for the evening one. */
+const SUMMARY_DEFAULT = { today: 8 * 60, tomorrow: 20 * 60 }
+
+async function saveSummary(patch) {
+  const updated = { ...S.shop, ...patch }
+  if (demo) { D.shop = updated; S.shop = updated }
+  else if (await run(() => api.update('shops', updated.id, patch))) S.shop = updated
+  render()
+}
+
+function notificationsSection(shop) {
+  const times = Array.from({ length: 24 * 4 }, (_, i) => i * 15)
+  return section('Notifiche', h('div', { class: 'card rows' },
+    h('div', { class: 'row' }, h('span', { class: 'secondary small' }, PUSH_TEXT[S.push] ?? '')),
+    S.push === 'off' && h('button', { type: 'button', class: 'row row-link accent', onclick: enablePush }, 'Attiva le notifiche'),
+    S.push === 'on' && h('button', { type: 'button', class: 'row row-link danger', onclick: () => disablePush() }, 'Disattiva su questo dispositivo'),
+    h('label', { class: 'row' }, h('span', {}, 'Riepilogo'), h('select', { value: shop.summary_day ?? '',
+      onchange: e => saveSummary({ summary_day: e.target.value || null, summary_minute: SUMMARY_DEFAULT[e.target.value] ?? shop.summary_minute ?? 1200 }) },
+      SUMMARY.map(([value, label]) => h('option', { value }, label)))),
+    shop.summary_day && h('label', { class: 'row' }, h('span', {}, 'Alle'), h('select', { value: String(shop.summary_minute ?? 1200),
+      onchange: e => saveSummary({ summary_minute: Number(e.target.value) }) }, times.map(t => h('option', { value: String(t) }, hhmm(t)))))),
+    h('p', { class: 'footer' }, 'Il riepilogo elenca orari e servizi del giorno e arriva sui dispositivi con le notifiche attive.'))
 }
 
 // MARK: Owner shop settings
@@ -810,7 +965,12 @@ function settingsView() {
           h('span', {}, s.name), h('span', { class: 'secondary' }, `${s.minutes} min · ${formatPrice(s.price_cents)}`)),
         h('button', { type: 'button', class: 'link danger', 'aria-label': `Elimina ${s.name}`, onclick: () => removeService(s) }, 'Elimina'))),
       h('button', { type: 'button', class: 'row row-link accent',
-        onclick: () => openService({ id: crypto.randomUUID(), shop_id: shop.id, name: '', minutes: 30, price_cents: 1500 }) }, 'Aggiungi servizio'))))
+        onclick: () => openService({ id: crypto.randomUUID(), shop_id: shop.id, name: '', minutes: 30, price_cents: 1500 }) }, 'Aggiungi servizio'))),
+    notificationsSection(shop),
+    S.blocked.length > 0 && section('Clienti bloccati', h('div', { class: 'card rows' },
+      S.blocked.map(x => h('div', { class: 'row' }, h('span', {}, x.customer_name),
+        h('button', { type: 'button', class: 'link', 'aria-label': `Sblocca ${x.customer_name}`, onclick: () => unblock(x) }, 'Sblocca')))),
+      h('p', { class: 'footer' }, 'Non possono prenotare nel tuo negozio dal telefono o browser con cui avevano prenotato.')))
 }
 
 /** The system share sheet with the QR image where the browser offers it (phones), a download elsewhere. */
@@ -917,12 +1077,13 @@ function demoData() {
     [1, 16, 0, 0, 2, 'Marco R.'], [2, 10, 0, 1, 1, 'Sara'], [4, 15, 30, 0, 2, 'Luigi']]
   const today = startOfDay(new Date())
   const bookings = samples.map(([day, hour, minute, who, what, name]) => {
-    const d = addDays(today, day), start = new Date(d.getFullYear(), d.getMonth(), d.getDate(), hour, minute)
+    const d = rome(addDays(today, day)), start = romeDate(d.year, d.month, d.day, hour, minute)
     return { id: crypto.randomUUID(), shop_id: shop.id, staff_id: staff[who].id, service_name: services[what].name, customer_name: name,
+      customer_id: day === 0 ? null : `demo-${name}`, // the first is a walk-in
       starts_at: start, ends_at: new Date(start.getTime() + services[what].minutes * 60000), staff: { name: staff[who].name }, shops: { name: shop.name } }
   })
   // Appointments made by the owner (samples, walk-ins), kept out of the customer's "Le mie prenotazioni".
-  return { shop, staff, services, bookings, ownerBookings: new Set(bookings.map(b => b.id)) }
+  return { shop, staff, services, bookings, ownerBookings: new Set(bookings.map(b => b.id)), blocked: [] }
 }
 
 // MARK: Start
@@ -933,7 +1094,7 @@ setInterval(() => { if (agendaVisible() && document.visibilityState === 'visible
 document.addEventListener('visibilitychange', () => {
   if (document.visibilityState !== 'visible') return
   if (agendaVisible()) reloadAgenda(true)
-  if (S.phase === 'ready' && S.role === 'customer' && S.tab.customer === 'book' && S.form) refreshForm(S.form, render)
+  if (S.phase === 'ready' && S.role === 'customer' && S.tab.customer === 'book' && S.form) refreshForm(S.form, render, true)
 })
 
 async function boot() {
@@ -941,11 +1102,13 @@ async function boot() {
   try {
     if (!demo && await api.finishGoogle() && S.role === 'owner') setOwnerSignInRequired(false)
   } catch (e) { handle(e) }
-  // QR code scanned with the phone camera: ?shop=<CODE>
+  // QR code scanned with the phone camera: ?shop=<CODE>. Always the customer side, with its own anonymous account:
+  // an owner signed in on this browser stays signed in, in the owner side.
   const code = params.get('shop')
   if (code != null) {
     S.role = 'customer'
     ROLE.set('customer')
+    api.useRole('customer')
     const valid = normalizeCode(code)
     if (valid) SHOP_CODE.set(valid)
     else showAlert('Attenzione', 'Codice non valido.')

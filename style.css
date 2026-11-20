@@ -252,3 +252,18 @@ dialog::backdrop { background: rgba(0, 0, 0, .45); }
   .qr-actions { display: none; }
   .print-only { display: block; font-size: 24px; }
 }
+
+/* Sign in with Google as in Google's branding guidelines: the "G" unchanged, light or dark theme, Roboto Medium where
+   the device has it (Android), else the system font: no font downloaded from Google. */
+.gsi-button { display: inline-flex; align-items: center; justify-content: center; gap: 12px; width: 100%; min-height: 44px;
+  padding: 0 16px; border: 1px solid #747775; border-radius: 22px; background: #fff; color: #1f1f1f;
+  font: 500 15px/20px Roboto, system-ui, -apple-system, "Segoe UI", sans-serif; letter-spacing: .25px; text-transform: none; cursor: pointer; }
+.gsi-button svg { width: 20px; height: 20px; flex: none; }
+.gsi-button:active { background: #f2f2f2; }
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=light]) .gsi-button { background: #131314; border-color: #8e918f; color: #e3e3e3; }
+}
+:root[data-theme=dark] .gsi-button { background: #131314; border-color: #8e918f; color: #e3e3e3; }
+
+/* Cloudflare Turnstile, when it needs a tap before a new anonymous account (api.js, captchaToken). */
+.captcha { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 1000; }

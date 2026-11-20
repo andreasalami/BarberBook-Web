@@ -145,12 +145,12 @@ do $$ begin
   -- At most 4 upcoming bookings per customer and shop.
   insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at)
   select 'a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Carlo',
-         public.t(7, h), public.t(7, h) + interval '30 minutes'
-  from unnest(array['13:00', '14:00', '15:00']) h;
+         public.t(d, '13:00'), public.t(d, '13:00') + interval '30 minutes'
+  from unnest(array[8, 9, 10]) d; -- one a day: at most 2 a day since 20261120120000
   begin
     insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
       ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Carlo',
-       public.t(7, '16:00'), public.t(7, '16:30'));
+       public.t(11, '16:00'), public.t(11, '16:30'));
     raise exception 'FAIL: fifth upcoming booking accepted';
   exception when check_violation then null;
   end;
@@ -168,7 +168,7 @@ begin
   select count(*) into n from gone;
   if n <> 0 then raise exception 'FAIL: customer D cancelled a booking of C'; end if;
   select count(*) into n from public.busy('a2000000-0000-4000-8000-000000000000', public.t(7, '00:00'), public.t(8, '00:00'));
-  if n <> 4 then raise exception 'FAIL: busy() returned % intervals, expected 4', n; end if;
+  if n <> 1 then raise exception 'FAIL: busy() returned % intervals, expected 1', n; end if;
   begin
     insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
       ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Dora',
@@ -270,6 +270,149 @@ do $$ begin
                (select id from public.services where shop_id = 'a1000000-0000-4000-8000-000000000000' limit 1),
                (now() at time zone 'Europe/Rome')::date + 7)) then
     raise exception 'FAIL: free_slots returned nothing on an open day';
+  end if;
+end $$;
+
+-- 20261120120000: one role per account, daily and hourly limits, blocked customers, daily summary, delete_me guard.
+insert into auth.users (id, aud, role, is_anonymous) values
+  ('e0000000-0000-4000-8000-0000000000e1', 'authenticated', 'authenticated', true),  -- customer E
+  ('f0000000-0000-4000-8000-0000000000f1', 'authenticated', 'authenticated', true);  -- customer F, later links Google
+
+-- Owner B: an owner account books only walk-ins in its own shop; registers a browser for Web Push.
+select set_config('request.jwt.claims', '{"sub":"b0000000-0000-4000-8000-00000000000b","role":"authenticated","is_anonymous":false}', true);
+set local role authenticated;
+do $$ begin
+  begin
+    insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
+      ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Bruno',
+       public.t(12, '10:00'), public.t(12, '10:30'));
+    raise exception 'FAIL: owner account booked as a customer in another shop';
+  exception when check_violation then null;
+  end;
+  perform public.register_device('{"endpoint":"https://push.example/b","keys":{"p256dh":"x","auth":"y"}}', 'web');
+end $$;
+reset role;
+do $$ begin
+  if not exists (select 1 from public.devices where user_id = 'b0000000-0000-4000-8000-00000000000b' and platform = 'web') then
+    raise exception 'FAIL: web push subscription not registered';
+  end if;
+end $$;
+
+-- Customer E: at most 2 bookings a day per shop; at most 6 new bookings an hour, cancelled ones included.
+select set_config('request.jwt.claims', '{"sub":"e0000000-0000-4000-8000-0000000000e1","role":"authenticated","is_anonymous":true}', true);
+set local role authenticated;
+do $$
+declare i int;
+begin
+  insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at)
+  select 'a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Elena',
+         public.t(12, h), public.t(12, h) + interval '30 minutes'
+  from unnest(array['10:00', '11:00']) h;
+  begin
+    insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
+      ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Elena',
+       public.t(12, '12:00'), public.t(12, '12:30'));
+    raise exception 'FAIL: third booking on the same day accepted';
+  exception when check_violation then
+    if sqlerrm not like '%al giorno%' then raise exception 'FAIL: daily limit gave "%"', sqlerrm; end if;
+  end;
+  for i in 1..4 loop -- book and cancel: 2 + 4 = 6 bookings in the last hour
+    insert into public.bookings (id, shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
+      ('e1000000-0000-4000-8000-000000000000', 'a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000',
+       'Taglio', 'Elena', public.t(12 + i, '10:00'), public.t(12 + i, '10:30'));
+    delete from public.bookings where id = 'e1000000-0000-4000-8000-000000000000';
+  end loop;
+  begin
+    insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
+      ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Elena',
+       public.t(20, '10:00'), public.t(20, '10:30'));
+    raise exception 'FAIL: seventh booking in an hour accepted';
+  exception when check_violation then
+    if sqlerrm not like '%poco tempo%' then raise exception 'FAIL: hourly limit gave "%"', sqlerrm; end if;
+  end;
+end $$;
+reset role;
+
+-- Customer F books, owner A blocks F, F is refused and cannot read the block list.
+select set_config('request.jwt.claims', '{"sub":"f0000000-0000-4000-8000-0000000000f1","role":"authenticated","is_anonymous":true}', true);
+set local role authenticated;
+insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
+  ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Fede',
+   public.t(12, '15:00'), public.t(12, '15:30'));
+reset role;
+select set_config('request.jwt.claims', '{"sub":"a0000000-0000-4000-8000-00000000000a","role":"authenticated","is_anonymous":false}', true);
+set local role authenticated;
+insert into public.blocked_customers (shop_id, customer_id, customer_name) values
+  ('a1000000-0000-4000-8000-000000000000', 'f0000000-0000-4000-8000-0000000000f1', 'Fede');
+reset role;
+select set_config('request.jwt.claims', '{"sub":"b0000000-0000-4000-8000-00000000000b","role":"authenticated","is_anonymous":false}', true);
+set local role authenticated;
+do $$ begin
+  if exists (select 1 from public.blocked_customers) then raise exception 'FAIL: owner B sees the block list of shop A'; end if;
+  begin
+    insert into public.blocked_customers (shop_id, customer_id, customer_name) values
+      ('a1000000-0000-4000-8000-000000000000', 'e0000000-0000-4000-8000-0000000000e1', 'Elena');
+    raise exception 'FAIL: owner B blocked a customer of shop A';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+reset role;
+select set_config('request.jwt.claims', '{"sub":"f0000000-0000-4000-8000-0000000000f1","role":"authenticated","is_anonymous":true}', true);
+set local role authenticated;
+do $$ begin
+  if exists (select 1 from public.blocked_customers) then raise exception 'FAIL: customer reads the block list'; end if;
+  begin
+    insert into public.bookings (shop_id, staff_id, service_name, customer_name, starts_at, ends_at) values
+      ('a1000000-0000-4000-8000-000000000000', 'a2000000-0000-4000-8000-000000000000', 'Taglio', 'Fede',
+       public.t(13, '15:00'), public.t(13, '15:30'));
+    raise exception 'FAIL: blocked customer booked';
+  exception when check_violation then
+    if sqlerrm not like '%non accetta%' then raise exception 'FAIL: block gave "%"', sqlerrm; end if;
+  end;
+end $$;
+reset role;
+
+-- F links Google (no longer anonymous) but booked as a customer: it cannot open a shop.
+update auth.users set is_anonymous = false where id = 'f0000000-0000-4000-8000-0000000000f1';
+select set_config('request.jwt.claims', '{"sub":"f0000000-0000-4000-8000-0000000000f1","role":"authenticated","is_anonymous":false}', true);
+set local role authenticated;
+do $$ begin
+  begin
+    insert into public.shops (name, week) values ('Shop F', '[null,null,null,null,null,null,null]');
+    raise exception 'FAIL: a customer account opened a shop';
+  exception when insufficient_privilege then null;
+  end;
+end $$;
+reset role;
+
+-- Daily summary: once a day, within an hour of the chosen time.
+update public.shops set summary_day = 'tomorrow',
+  summary_minute = (extract(hour from now() at time zone 'Europe/Rome')::int * 60
+                    + extract(minute from now() at time zone 'Europe/Rome')::int) / 15 * 15
+  where id = 'a1000000-0000-4000-8000-000000000000';
+select public.queue_daily_summaries();
+select public.queue_daily_summaries();
+do $$ begin
+  if (select count(*) from public.notifications where kind = 'summary' and user_id = 'a0000000-0000-4000-8000-00000000000a') <> 1 then
+    raise exception 'FAIL: daily summary not queued exactly once';
+  end if;
+end $$;
+
+-- Owner B: delete_me() without p_with_shop keeps the shop; with it, account and shop go.
+select set_config('request.jwt.claims', '{"sub":"b0000000-0000-4000-8000-00000000000b","role":"authenticated","is_anonymous":false}', true);
+set local role authenticated;
+do $$ begin
+  begin
+    perform public.delete_me();
+    raise exception 'FAIL: delete_me() deleted an owner account without p_with_shop';
+  exception when insufficient_privilege then null;
+  end;
+  perform public.delete_me(true);
+end $$;
+reset role;
+do $$ begin
+  if exists (select 1 from public.shops where id = 'b1000000-0000-4000-8000-000000000000') then
+    raise exception 'FAIL: delete_me(true) kept the shop';
   end if;
 end $$;
 

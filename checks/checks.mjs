@@ -1,15 +1,26 @@
 // Self-check for the slot logic, price input and QR encoder. From the project root:
-//   TZ=Europe/Rome node checks/checks.mjs
+//   node checks/checks.mjs
+// Times are Rome's whatever the machine's time zone: also try TZ=America/New_York node checks/checks.mjs
 // With an argument, also writes QR matrices for checks/qr-decode.swift (see README → Controlli).
 import assert from 'node:assert/strict'
 import { writeFileSync } from 'node:fs'
-import { freeStarts, cents, defaultWeek, hhmm, ics, isOutside } from '../logic.js'
+import { freeStarts, cents, defaultWeek, hhmm, ics, isOutside, rome, romeDate, startOfDay, addDays, dayValue, parseDay, time } from '../logic.js'
 import { qr } from '../qr.js'
 
-const at = (day, h, m = 0) => new Date(2026, 10, day, h, m)
-const hm = d => hhmm(d.getHours() * 60 + d.getMinutes())
+const at = (day, h, m = 0) => romeDate(2026, 10, day, h, m)
+const hm = d => { const r = rome(d); return hhmm(r.hour * 60 + r.minute) }
 const tuesday = at(17, 0), monday = at(16, 0), past = at(1, 0), week = defaultWeek()
-assert.equal(tuesday.getDay(), 2)
+assert.equal(rome(tuesday).dow, 2)
+
+// Rome's wall clock: 17 Nov 10:00 is 09:00 UTC (winter), 17 Jul 10:00 is 08:00 UTC (summer).
+assert.equal(at(17, 10).toISOString(), '2026-11-17T09:00:00.000Z')
+assert.equal(romeDate(2026, 6, 17, 10).toISOString(), '2026-07-17T08:00:00.000Z')
+assert.equal(time(at(17, 10)), '10:00')
+// Daylight saving ends on 25 Oct 2026: that day has 25 hours, the next midnight is still a Rome midnight.
+assert.equal(addDays(romeDate(2026, 9, 25), 1).toISOString(), '2026-10-25T23:00:00.000Z')
+assert.equal(startOfDay(at(17, 23, 30)).toISOString(), '2026-11-16T23:00:00.000Z')
+assert.equal(dayValue(parseDay('2026-11-17')), '2026-11-17')
+assert.equal(dayValue(at(17, 0, 30)), '2026-11-17') // 23:30 UTC on the 16th
 
 // Open day, nothing booked: 09:00 ... 18:30 every 30 minutes.
 const all = freeStarts(tuesday, week, 30, [], past)
