@@ -505,25 +505,33 @@ function roleChoiceView() {
     h('p', { class: 'footnote secondary' }, 'Puoi cambiare profilo in qualsiasi momento.'))
 }
 
-/** Customer: the shops already opened in this browser, and a code field to add one. The QR code in the shop opens
- *  the site already on the shop and adds it to the list. */
+/** Customer: the shops already opened in this browser, as cards; + adds one by code. Without saved shops it goes
+ *  straight to the code field. The QR code in the shop opens the site already on the shop and adds it to the list. */
 function shopPickerView() {
-  let code = ''
   const list = favorites()
-  const open = h('button', { type: 'submit', class: 'primary', disabled: true }, 'Apri il negozio')
-  return page(header(list.length ? 'I tuoi negozi' : 'Il tuo negozio', accountButton()),
-    list.length > 0 && section(null, h('div', { class: 'card rows' }, list.map(x => h('div', { class: 'row' },
+  if (!list.length) return page(header('Il tuo negozio', accountButton()), codeForm())
+  return page(header('I tuoi negozi',
+      h('button', { type: 'button', class: 'icon-button', 'aria-label': 'Aggiungi negozio',
+        onclick: () => openSheet(() => sheetPage('Nuovo negozio', closeButton(), codeForm())) }, icon('plus')),
+      accountButton()),
+    h('div', { class: 'card-grid' }, list.map(x => h('article', { class: 'card booking-card shop-card' },
       h('button', { type: 'button', class: 'row-link grow', onclick: () => openShop(x.code) },
-        h('span', {}, x.name), h('span', { class: 'secondary mono' }, x.code)),
+        h('span', { class: 'strong' }, x.name), h('span', { class: 'secondary mono' }, x.code)),
       h('button', { type: 'button', class: 'link danger', 'aria-label': `Togli ${x.name} dalla lista`,
-        onclick: () => { forgetShop(x.code); render() } }, 'Togli'))))),
-    h('form', { onsubmit: e => { e.preventDefault(); if (code.trim().length >= 4) openShop(code) } },
-      section(list.length ? 'Aggiungi un negozio' : null, h('div', { class: 'card' }, h('input', { class: 'code-input', placeholder: 'Codice del negozio',
-        'aria-label': 'Codice del negozio', autocapitalize: 'characters', autocomplete: 'off', autocorrect: 'off', spellcheck: false,
-        maxlength: '12', oninput: e => { code = e.target.value; open.disabled = code.trim().length < 4 } })),
-      h('p', { class: 'footer' }, demo ? 'Demo: usa il codice BARBA2.'
-        : 'Il codice te lo dà il negozio. Puoi anche inquadrare il QR del negozio con la fotocamera del telefono.')),
-      open))
+        onclick: () => { forgetShop(x.code); render() } }, 'Togli')))))
+}
+
+/** The code field: on the first visit, or from + in the list of shops. */
+function codeForm() {
+  let code = ''
+  const open = h('button', { type: 'submit', class: 'primary', disabled: true }, 'Apri il negozio')
+  return h('form', { onsubmit: e => { e.preventDefault(); if (code.trim().length >= 4) { closeSheet(); openShop(code) } } },
+    section(null, h('div', { class: 'card' }, h('input', { class: 'code-input', placeholder: 'Codice del negozio',
+      'aria-label': 'Codice del negozio', autocapitalize: 'characters', autocomplete: 'off', autocorrect: 'off', spellcheck: false,
+      maxlength: '12', oninput: e => { code = e.target.value; open.disabled = code.trim().length < 4 } })),
+    h('p', { class: 'footer' }, demo ? 'Demo: usa il codice BARBA2.'
+      : 'Il codice te lo dà il negozio. Puoi anche inquadrare il QR del negozio con la fotocamera del telefono.')),
+    open)
 }
 
 /** Google's "G", unchanged as its branding guidelines require. */
