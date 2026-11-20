@@ -178,6 +178,8 @@ h1, .group > h2, .day-title h3, .big, .primary, .tab, .code-big { font-family: v
 @media (min-width: 720px) { .card-grid { grid-template-columns: 1fr 1fr; } }
 .booking-card { display: flex; flex-direction: column; gap: 6px; padding: 16px; border-left: 6px solid var(--cta); }
 .split { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+/* "Le mie prenotazioni": red and blue in turn, like the agenda. */
+.card-grid .booking-card:nth-of-type(even) { border-left-color: var(--accent-fill); }
 .booking-card .icon-button { margin: -10px -10px -10px 0; }
 .big { font-size: 32px; line-height: 1.1; }
 .empty { text-align: center; padding-top: 40px; }
